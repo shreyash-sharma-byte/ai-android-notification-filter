@@ -1,0 +1,19 @@
+# Build output
+build/
+dist/
+*.apk
+*.aab
+*.idsig
+
+# Signing material — never commit this
+*.jks
+*.keystore
+release.*
+keystore.properties
+
+# Tooling
+.gradle/
+local.properties
+.idea/
+*.iml
+.DS_Store

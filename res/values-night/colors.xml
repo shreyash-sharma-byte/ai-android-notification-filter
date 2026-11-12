@@ -1,0 +1,6 @@
+<resources>
+    <!-- Night palette: warm black, cream ink, the same vermilion lifted for a dark ground. -->
+    <color name="bg">#FF12100D</color>
+    <color name="line">#FF322C24</color>
+    <color name="accent">#FFE0562F</color>
+</resources>
