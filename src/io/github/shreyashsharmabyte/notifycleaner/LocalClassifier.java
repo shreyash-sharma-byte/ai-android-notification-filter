@@ -1,6 +1,7 @@
 package io.github.shreyashsharmabyte.notifycleaner;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -101,8 +102,15 @@ public final class LocalClassifier {
 
     /** Reads the gzipped asset. Rows are {@code token<TAB>idf<TAB>coef}; the first row is the bias. */
     public static Model load(InputStream raw) throws IOException {
+        // Read it all first (18 KB) and sniff the gzip magic. Whether an asset arrives gzipped,
+        // already inflated, or wrapped by the AssetManager's own compression is not something the
+        // caller should have to know, and guessing wrong looks exactly like "the model is missing".
+        byte[] all = readFully(raw);
+        InputStream body = (all.length > 2 && (all[0] & 0xff) == 0x1f && (all[1] & 0xff) == 0x8b)
+                ? new GZIPInputStream(new ByteArrayInputStream(all))
+                : new ByteArrayInputStream(all);
         BufferedReader in = new BufferedReader(
-                new InputStreamReader(new GZIPInputStream(raw), StandardCharsets.UTF_8));
+                new InputStreamReader(body, StandardCharsets.UTF_8));
 
         String first = in.readLine();
         if (first == null || !first.startsWith("#bias")) throw new IOException("not a model file");
@@ -131,6 +139,15 @@ public final class LocalClassifier {
             coefArr[i] = coef.get(i);
         }
         return new Model(bias, index, idfArr, coefArr);
+    }
+
+    private static byte[] readFully(InputStream in) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(24576);
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        in.close();
+        return out.toByteArray();
     }
 
     // ------------------------------------------------------------------ inference

@@ -118,7 +118,8 @@ public class SettingsActivity extends Screen {
                     + (notificationAccessGranted() ? "granted" : "NOT granted")
                     + "\nFiltering: " + (prefs.enabled() ? "on" : "off")
                     + "\n\nThe model could not be loaded from the app bundle, so every "
-                    + "notification is being kept. That is a bug worth reporting.";
+                    + "notification is being kept.\n\nReason: "
+                    + (NotifService.localModelError == null ? "unknown" : NotifService.localModelError);
         } else {
             LocalClassifier.Result promo = LocalClassifier.classify(m, "Zomato", "50% OFF for you",
                     "Get 50% off up to Rs 120 on your next 3 orders. Use code CRAVE50.");

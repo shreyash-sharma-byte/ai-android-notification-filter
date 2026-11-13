@@ -83,6 +83,9 @@ public class NotifService extends NotificationListenerService {
     /** Set once a load has failed, so a broken asset cannot turn into I/O per notification. */
     private static volatile boolean localModelFailed;
 
+    /** Why the load failed, for the in-app self-test. Null when it succeeded. */
+    static volatile String localModelError;
+
     /**
      * @return the cached on-device model, or null when the asset could not be read. Null means the
      *     caller must keep the notification — an unavailable classifier is never a dismissal.
@@ -99,6 +102,8 @@ public class NotifService extends NotificationListenerService {
                 Log.i(TAG, "on-device model loaded: " + localModel.size() + " features");
             } catch (Throwable t) {
                 localModelFailed = true;
+                localModelError = t.getClass().getSimpleName()
+                        + (t.getMessage() == null ? "" : ": " + t.getMessage());
                 Log.w(TAG, "on-device model unavailable: " + t);
             } finally {
                 if (in != null) {
