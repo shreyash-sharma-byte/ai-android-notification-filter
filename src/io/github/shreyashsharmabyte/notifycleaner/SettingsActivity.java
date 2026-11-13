@@ -96,7 +96,49 @@ public class SettingsActivity extends Screen {
                   + "on-device classifier at any time."
                 : "Classification runs on this device. No key, no account, and nothing leaves "
                   + "the phone.");
+        if (!prefs.usesProvider()) {
+            root.addView(settingsRow("Test the on-device classifier", null, true,
+                    new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) { testOnDevice(); }
+                    }));
+        }
         root.addView(rule(), margins(10, 20, 20, 0));
+    }
+
+    /**
+     * A visible self-test. Reports whether the on-device model loaded and what it answers for a
+     * sample promotion and a sample OTP, so "it does nothing" is one tap from an answer.
+     */
+    private void testOnDevice() {
+        LocalClassifier.Model m = NotifService.localModel(this);
+        String msg;
+        if (m == null) {
+            msg = "Notification access: "
+                    + (notificationAccessGranted() ? "granted" : "NOT granted")
+                    + "\nFiltering: " + (prefs.enabled() ? "on" : "off")
+                    + "\n\nThe model could not be loaded from the app bundle, so every "
+                    + "notification is being kept. That is a bug worth reporting.";
+        } else {
+            LocalClassifier.Result promo = LocalClassifier.classify(m, "Zomato", "50% OFF for you",
+                    "Get 50% off up to Rs 120 on your next 3 orders. Use code CRAVE50.");
+            LocalClassifier.Result otp = LocalClassifier.classify(m, "ICICI Bank",
+                    "OTP for your transaction",
+                    "482913 is your OTP for a transaction of Rs 1,299. Do not share this with anyone.");
+            msg = "Notification access: "
+                    + (notificationAccessGranted() ? "granted" : "NOT granted")
+                    + "\nFiltering: " + (prefs.enabled() ? "on" : "off")
+                    + "\n\nModel loaded: " + m.size() + " features.\n\n"
+                    + "Sample promotion \u2192 " + promo.verdict
+                    + (promo.guard == null ? "" : " (kept by rule: " + promo.guard + ")") + "\n"
+                    + "Sample OTP \u2192 " + otp.verdict
+                    + (otp.guard == null ? "" : " (kept by rule: " + otp.guard + ")");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("On-device classifier")
+                .setMessage(msg)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     /**
