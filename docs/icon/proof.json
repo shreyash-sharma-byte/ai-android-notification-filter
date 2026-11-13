@@ -1,0 +1,74 @@
+{
+  "source": "/home/yash/.hermes/cache/images/img_af8faf6a0063.jpg",
+  "render": "/home/yash/projects/notifycleaner/docs/icon/proof-render.png",
+  "match": {
+    "tile_tol8": 98.92,
+    "tile_tol16": 99.34,
+    "tile_tol32": 99.79,
+    "tile_tol0_exact": 91.81,
+    "full_tol16": 99.27,
+    "mean_abs_err_tile": 0.28
+  },
+  "worst_regions": [
+    {
+      "box": [
+        544,
+        768,
+        576,
+        800
+      ],
+      "mean_abs_err": 4.44,
+      "max_abs_err": 65
+    },
+    {
+      "box": [
+        608,
+        640,
+        640,
+        672
+      ],
+      "mean_abs_err": 4.22,
+      "max_abs_err": 60
+    },
+    {
+      "box": [
+        704,
+        640,
+        736,
+        672
+      ],
+      "mean_abs_err": 4.19,
+      "max_abs_err": 62
+    },
+    {
+      "box": [
+        736,
+        544,
+        768,
+        576
+      ],
+      "mean_abs_err": 4.1,
+      "max_abs_err": 56
+    },
+    {
+      "box": [
+        768,
+        768,
+        800,
+        800
+      ],
+      "mean_abs_err": 4.01,
+      "max_abs_err": 61
+    },
+    {
+      "box": [
+        704,
+        800,
+        736,
+        832
+      ],
+      "mean_abs_err": 4.05,
+      "max_abs_err": 60
+    }
+  ]
+}

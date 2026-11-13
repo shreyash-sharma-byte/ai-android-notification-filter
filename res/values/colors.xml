@@ -4,5 +4,5 @@
     <color name="line">#FFE3DACA</color>
     <color name="accent">#FFC1441F</color>
     <!-- Plate colour of the launcher icon; identical in both themes. -->
-    <color name="ic_launcher_background">#FF12100D</color>
+    <color name="ic_launcher_background">#FF11100C</color>
 </resources>
