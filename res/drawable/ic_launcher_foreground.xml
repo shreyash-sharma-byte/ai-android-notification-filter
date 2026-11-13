@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Adaptive foreground, 108x108 with the 72dp safe zone centred.
+  Adaptive foreground, 108x108, 72dp safe zone centred.
 
-  A bell with a funnel inside it. The bell is the notification; the funnel is what happens to it.
-  Two shapes, two colours, no strokes or gradients, so it stays legible at 48dp — a plain bell reads
-  as "notifications" and a plain funnel reads as "filter", and this says both in one silhouette.
+  A bell in two parts: cream body, vermilion skirt. The skirt is the part that gets filtered away,
+  and the horizontal split is the only accent - no stem, no inner shape, nothing that can be misread
+  at small size.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -12,13 +12,19 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Bell -->
+    <!-- handle -->
     <path
         android:fillColor="#F4EDE0"
-        android:pathData="M54,23c-8.6,0 -15,6.6 -15,15.4v8.6l-5,7c-1,1.4 0,3.4 1.8,3.4h36.4c1.8,0 2.8,-2 1.8,-3.4l-5,-7V38.4C69,29.6 62.6,23 54,23z" />
+        android:pathData="M54,15.4a4.6,4.6 0 1,0 0,9.2a4.6,4.6 0 1,0 0,-9.2z" />
 
-    <!-- Funnel -->
+    <!-- body, down to the split -->
+    <path
+        android:fillColor="#F4EDE0"
+        android:pathData="M39.6,52L39.6,39.4C39.6,30.6 46,24 54,24s14.4,6.6 14.4,15.4L68.4,52z" />
+
+    <!-- skirt -->
     <path
         android:fillColor="#E4572E"
-        android:pathData="M43,36h22l-8,12.4v7.6h-6v-7.6z" />
+        android:pathData="M39.6,52h28.8v8.4l5,7c1,1.4 0,3.4 -1.8,3.4H36.4c-1.8,0 -2.8,-2 -1.8,-3.4l5,-7z" />
+
 </vector>
