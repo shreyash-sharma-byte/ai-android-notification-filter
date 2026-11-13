@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Adaptive foreground, 108x108, 72dp safe zone centred.
+  Adaptive foreground, 108x108.
 
-  Three notification rows, the last cut short, feeding a vermilion funnel.
+  Four notification rows on avatar + bar, fading cream to grey and stepping rightwards as they go,
+  then a vermilion disc with a funnel cut out of it. Colours are the app's own: cream #F4EDE0, muted
+  #8C857A, deeper #6E6960, accent #E4572E.
 
-  Spacing: 3 between rows, 6 between the last row and the funnel, so the funnel is a second stage not
-  a fourth row. The funnel mouth is exactly the row width (36..72). The stem is 8 wide rather than 12:
-  a thick short stem reads as a cup, a slim one reads as a funnel.
+  The funnel is a true cut-out (evenOdd) rather than a disc-coloured shape, so it stays correct over
+  any background the launcher substitutes.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -14,20 +15,26 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <path
-        android:fillColor="#F4EDE0"
-        android:pathData="M40.5,23H67.5A4.5,4.5 0 0 1 67.5,32H40.5A4.5,4.5 0 0 1 40.5,23z" />
+    <!-- row 1 -->
+    <path android:fillColor="#F4EDE0" android:pathData="M21.4,20.6h5.5v5.5h-5.5z" />
+    <path android:fillColor="#F4EDE0" android:pathData="M31.6,20.6h44.5v5.5h-44.5z" />
 
-    <path
-        android:fillColor="#F4EDE0"
-        android:pathData="M40.5,35H67.5A4.5,4.5 0 0 1 67.5,44H40.5A4.5,4.5 0 0 1 40.5,35z" />
+    <!-- row 2 -->
+    <path android:fillColor="#F4EDE0" android:pathData="M21.4,33.8h5.5v5.5h-5.5z" />
+    <path android:fillColor="#F4EDE0" android:pathData="M31.6,33.8h34.8v5.5h-34.8z" />
 
-    <path
-        android:fillColor="#F4EDE0"
-        android:pathData="M40.5,47H55.5A4.5,4.5 0 0 1 55.5,56H40.5A4.5,4.5 0 0 1 40.5,47z" />
+    <!-- row 3 -->
+    <path android:fillColor="#8C857A" android:pathData="M26.4,47.2h5.5v5.5h-5.5z" />
+    <path android:fillColor="#8C857A" android:pathData="M36.7,47.2h44.5v5.5h-44.5z" />
 
+    <!-- row 4 -->
+    <path android:fillColor="#6E6960" android:pathData="M31.6,60.7h5.3v5.5h-5.3z" />
+    <path android:fillColor="#6E6960" android:pathData="M41.7,60.7h30v5.5h-30z" />
+
+    <!-- disc with funnel cut out -->
     <path
         android:fillColor="#E4572E"
-        android:pathData="M36,62H72L58,74V84H50V74z" />
+        android:fillType="evenOdd"
+        android:pathData="M70.9,55a16,16 0 1,0 0.01,0z M63.3,65.7H78.9L72.8,73.4V80.2H70.1V73.4z" />
 
 </vector>
