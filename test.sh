@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 PKG=io/github/shreyashsharmabyte/notifycleaner
 SRC=src/$PKG
 OUT=build/test
-PURE="Decision Backoff CircuitBreaker RateLimiter Providers LogCodec Filters Prompt Urls Strictness AllowList LocalModels Telemetry LocalClassifier"
+PURE="Decision Backoff CircuitBreaker RateLimiter Providers LogCodec Filters Prompt Urls Strictness AllowList LocalModels Telemetry LocalClassifier Categories Evidence Guards Senders"
 
 # Guard: the testable core must stay free of Android types, or these tests cannot exist.
 violations=0

@@ -35,14 +35,27 @@ public final class Prefs {
     public static final String KEY_LAST_ERROR = "last_e";
     public static final String KEY_DROPPED = "dropped";
 
+    /** Total removals ever, so the home figure is not capped by the 100-entry log. */
+    public static final String KEY_REMOVED_TOTAL = "removed_total";
+
+    /** Epoch ms of the last notification the listener received. Metadata only, never content. */
+    public static final String KEY_LAST_NOTIFY = "last_notify";
+
     public static final int MAX_SEEN = 300;
 
-    /** Messaging, dialer and banking/OTP apps are protected out of the box; the user can edit it. */
-    public static final String DEFAULT_ALLOW =
-            "com.whatsapp,org.telegram.messenger,com.google.android.apps.messaging,"
-            + "com.samsung.android.messaging,com.google.android.dialer,com.android.dialer,"
-            + "com.google.android.gm,com.google.android.apps.authenticator2,net.one97.paytm,"
-            + "com.phonepe.app,com.google.android.apps.nbu.paisa.user";
+    /**
+     * Messaging, dialer and banking/OTP apps are protected out of the box; the user can edit it.
+     *
+     * <p>Every entry here is a promise that its notifications are never classified. The list used to
+     * cover only WhatsApp, Telegram, Google/Samsung Messages and dialers, which left Signal, Slack,
+     * Discord, Messenger and the rest of the chat long tail exposed to a classifier trained on
+     * promotions — and it dismissed ordinary conversational messages. Over-protecting an app costs a
+     * missed promotion; under-protecting one costs a message. Keep this list generous.
+     *
+     * <p>The list is built from {@link Senders#PERSONAL} rather than typed here, so the one table of
+     * "apps that carry a person's words or money" is the only list of its kind in the codebase.
+     */
+    public static final String DEFAULT_ALLOW = Senders.defaultAllow();
 
     private final SharedPreferences p;
 
@@ -183,10 +196,15 @@ public final class Prefs {
 
     // ---------------------------------------------------------------- protected apps
 
+    /**
+     * The protected list. Never configured ({@code null}) means {@link #DEFAULT_ALLOW}; a list the
+     * user has actually emptied stays empty, because "I turned everything off" is a decision and a
+     * control that snaps back on is worse than one that obeys.
+     */
     public String allowList() {
         String a = p.getString(KEY_ALLOW, null);
-        // Blank fails open to the default: an emptied list must never mean "protect nothing".
-        return (a == null || a.trim().isEmpty()) ? DEFAULT_ALLOW : a;
+        if (a == null) return DEFAULT_ALLOW;
+        return a.trim().isEmpty() ? "" : a;
     }
 
     public void setAllowList(String value) {
@@ -200,8 +218,24 @@ public final class Prefs {
     public void appendLog(String entry) {
         synchronized (WRITE_LOCK) {
             String merged = LogCodec.prepend(p.getString(KEY_LOG, ""), entry, LogCodec.MAX_ENTRIES);
-            p.edit().putString(KEY_LOG, merged).apply();
+            // The log is capped at 100, so the all-time figure is counted separately. It is the
+            // only number on the home page that keeps growing, and it must not silently stop.
+            p.edit()
+                    .putString(KEY_LOG, merged)
+                    .putInt(KEY_REMOVED_TOTAL, p.getInt(KEY_REMOVED_TOTAL, 0) + 1)
+                    .apply();
         }
+    }
+
+    /** Every removal ever, including those aged out of the 100-entry log. */
+    public int removedTotal() { return p.getInt(KEY_REMOVED_TOTAL, 0); }
+
+    /** Epoch ms of the last notification the listener received, or 0. Metadata only. */
+    public long lastNotificationAt() { return p.getLong(KEY_LAST_NOTIFY, 0L); }
+
+    /** Records only that a notification arrived. No content, no sender, no verdict. */
+    public void recordNotification(long nowMs) {
+        p.edit().putLong(KEY_LAST_NOTIFY, nowMs).apply();
     }
 
     public void clearLog() {

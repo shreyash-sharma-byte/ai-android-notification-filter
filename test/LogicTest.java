@@ -36,6 +36,10 @@ public final class LogicTest {
         strictness();
         allowList();
         localModels();
+        categories();
+        senders();
+        evidence();
+        guards();
         localClassifier();
         telemetry();
 
@@ -295,9 +299,12 @@ public final class LogicTest {
         check("tail difference changes key",
                 !Filters.cacheKey("com.a", "t", tailA, "m", "b", "p")
                         .equals(Filters.cacheKey("com.a", "t", tailB, "m", "b", "p")));
-        check("identical text still matches",
-                Filters.cacheKey("com.a", "t", tailA, "m", "b", "p")
-                        .equals(Filters.cacheKey("com.a", "t", tailA, "m", "b", "p")));
+        // The old assertion here compared cacheKey(x) to cacheKey(x): a tautology. What the
+        // full-text length+hash suffix actually exists for is a same-prefix, different-length
+        // pair, which the 400-character field alone cannot distinguish.
+        check("different length with the same prefix changes key",
+                !Filters.cacheKey("com.a", "t", tailA, "m", "b", "p")
+                        .equals(Filters.cacheKey("com.a", "t", tailA + " extra", "m", "b", "p")));
     }
 
     // ------------------------------------------------------------------ providers
@@ -582,11 +589,294 @@ public final class LogicTest {
         return max;
     }
 
+    // ------------------------------------------------------------------ categories
+
+    /**
+     * The cheapest safety net in the app. It already failed once by omitting chat, mail and
+     * calendar; these assertions are why that cannot happen silently again.
+     */
+    private static void categories() {
+        String[] functional = {"call", "alarm", "progress", "transport", "sys", "service",
+                "status", "err", "navigation", "reminder", "msg", "email", "event"};
+        for (String c : functional) check("functional category: " + c, Categories.isFunctional(c));
+        eq("functional category count", functional.length, Categories.count());
+
+        check("chat (CATEGORY_MESSAGE) is functional", Categories.isFunctional("msg"));
+        check("mail (CATEGORY_EMAIL) is functional", Categories.isFunctional("email"));
+        check("calendar (CATEGORY_EVENT) is functional", Categories.isFunctional("event"));
+        check("category matching is case-insensitive", Categories.isFunctional("MSG"));
+        check("category matching trims", Categories.isFunctional("  Event  "));
+        check("promo is not functional", !Categories.isFunctional("promo"));
+        check("recommendation is not functional", !Categories.isFunctional("recommendation"));
+        check("unknown category is not functional", !Categories.isFunctional("com.brand.SALE"));
+        check("null category is not functional", !Categories.isFunctional(null));
+        check("blank category is not functional", !Categories.isFunctional("   "));
+    }
+
+    // ------------------------------------------------------------------ senders
+
+    private static void senders() {
+        check("chat app is personal", Senders.isPersonal("com.whatsapp"));
+        check("business build of a chat app is personal", Senders.isPersonal("com.whatsapp.w4b"));
+        check("signal is personal", Senders.isPersonal("org.thoughtcrime.securesms"));
+        check("mail is personal", Senders.isPersonal("com.google.android.gm"));
+        check("upi is personal", Senders.isPersonal("com.phonepe.app"));
+        check("personal matching is case-insensitive", Senders.isPersonal("COM.SLACK"));
+        check("null is not personal", !Senders.isPersonal(null));
+
+        check("shop is commerce", Senders.isCommerce("com.flipkart.android"));
+        check("amazon shopping is commerce",
+                Senders.isCommerce("com.amazon.mShop.android.shopping"));
+        check("food delivery is commerce", Senders.isCommerce("com.swiggy.view"));
+        check("commerce matching is case-insensitive", Senders.isCommerce("COM.MYNTRA.ANDROID"));
+        check("null is not commerce", !Senders.isCommerce(null));
+
+        // A social app carries direct messages, so it must stay unknown: relaxing the rule for it
+        // would dismiss a person's words.
+        check("linkedin is neither", !Senders.isPersonal("com.linkedin.android")
+                && !Senders.isCommerce("com.linkedin.android"));
+        check("youtube is neither", !Senders.isCommerce("com.google.android.youtube"));
+        check("an unknown app is neither", !Senders.isPersonal("com.example.app")
+                && !Senders.isCommerce("com.example.app"));
+
+        // The two tables must not overlap, or an app would be both protected and trusted.
+        boolean overlap = false;
+        for (String a : Senders.PERSONAL) {
+            for (String b : Senders.COMMERCE) {
+                if (a.contains(b) || b.contains(a)) overlap = true;
+            }
+        }
+        check("personal and commerce tables do not overlap", !overlap);
+
+        // The default protected list is built from the personal table, so there is one source.
+        String allow = Senders.defaultAllow();
+        check("default list contains whatsapp", allow.contains("com.whatsapp"));
+        check("default list contains signal", allow.contains("org.thoughtcrime.securesms"));
+        check("default list never protects a shop", !Filters.isProtected(
+                allow, "com.flipkart.android"));
+        eq("default list entry count", Senders.PERSONAL.length, Filters.protectedCount(allow));
+        boolean shortEntry = false;
+        for (String entry : Senders.PERSONAL) {
+            if (entry.length() < Filters.MIN_ENTRY_LENGTH) shortEntry = true;
+        }
+        check("no default entry is too short to match", !shortEntry);
+    }
+
+    // ------------------------------------------------------------------ promotional evidence
+
+    private static void evidence() {
+        // Strong signals: any one is enough.
+        check("percentage is evidence", Evidence.hasPromotionalEvidence("50% OFF", "for you"));
+        check("percentage in the body counts", Evidence.hasPromotionalEvidence("", "Up to 70% off"));
+        check("sale copy is evidence",
+                Evidence.hasPromotionalEvidence("End of season sale",
+                        "Flat 60 percent off on 5000 styles. Shop now."));
+        check("cashback is evidence",
+                Evidence.hasPromotionalEvidence("Cashback", "You have Rs 250 cashback. Claim now."));
+        check("flat rs is evidence",
+                Evidence.hasPromotionalEvidence("", "Flat Rs 100 off on orders above Rs 999."));
+        check("upto is evidence", Evidence.hasPromotionalEvidence("", "Upto 80% off on fashion."));
+        check("download is evidence", Evidence.hasPromotionalEvidence("", "Download the app."));
+        check("free trial is evidence", Evidence.hasPromotionalEvidence("", "Start your free trial."));
+        check("special offer is evidence", Evidence.hasPromotionalEvidence("", "A special offer inside."));
+        check("unsubscribe is evidence", Evidence.hasPromotionalEvidence("", "Unsubscribe at any time."));
+
+        // Weak signals: one is not enough, two are.
+        check("one weak cue is not evidence",
+                !Evidence.hasPromotionalEvidence("", "I got a great deal on the tickets."));
+        check("two weak cues are evidence",
+                Evidence.hasPromotionalEvidence("", "Great deal and a big sale this weekend."));
+
+        // Deliberate omissions, each a real false-positive shape from the personal corpus.
+        check("free alone is not evidence", !Evidence.hasPromotionalEvidence("", "Are you free tonight?"));
+        check("offer alone is not evidence",
+                !Evidence.hasPromotionalEvidence("", "The offer still stands if you want it."));
+        check("word boundary: office is not off",
+                !Evidence.hasPromotionalEvidence("", "I am in the office."));
+        check("word boundary: coffee is not off",
+                !Evidence.hasPromotionalEvidence("", "Coffee tomorrow?"));
+        check("nothing is not evidence", !Evidence.hasPromotionalEvidence("", ""));
+        check("null is not evidence", !Evidence.hasPromotionalEvidence(null, null));
+    }
+
+    // ------------------------------------------------------------------ guard rules
+
+    /**
+     * The five rules, and the names the Settings self-test prints. They must be reachable from
+     * one pure class and from the classifier, because both engines now depend on them.
+     */
+    private static void guards() {
+        eq("guard names", "[otp, transaction, order, security, deadline]",
+                java.util.Arrays.toString(Guards.NAMES));
+
+        eq("guard otp", "otp", Guards.check("ICICI Bank", "OTP",
+                "482913 is your OTP. Do not share this with anyone."));
+        eq("guard transaction", "transaction", Guards.check("HDFC Bank", "Transaction alert",
+                "Rs 2499 debited from A/C XX4412 at Amazon."));
+        eq("guard order", "order", Guards.check("Amazon", "Delivery",
+                "Your package is out for delivery today."));
+        eq("guard security", "security", Guards.check("Gmail", "Security alert",
+                "New sign-in to your Google Account from a Windows device."));
+        eq("guard deadline", "deadline", Guards.check("Bank", "KYC",
+                "Your KYC expires today. Complete re-KYC to avoid suspension."));
+        eq("guard reads the app label too", "transaction",
+                Guards.check("Bank", "", "Rs 100 debited"));
+        eq("guard none", null, Guards.check("Swiggy", "50% OFF",
+                "Use code CRAVE50 before Sunday."));
+        eq("guard null safe", null, Guards.check(null, null, null));
+        eq("local classifier delegates to Guards", "otp",
+                LocalClassifier.guard("ICICI", "OTP", "Your OTP is 482913"));
+    }
+
     // ------------------------------------------------------------------ on-device classifier
 
     /**
+     * The messages from the pre-publication review, plus the same conversational shape around
+     * them. Not one of these contains promotional language; every one must be KEEP. Before the
+     * fix, 16 of this corpus came back JUNK from the shipped weights.
+     */
+    private static final String[][] PERSONAL = {
+            {"Signal", "Alice", "Are you free tonight?"},
+            {"Signal", "Alice", "Call me when you see this"},
+            {"Signal", "Team", "Meeting at 4pm in room 2"},
+            {"Signal", "Alice", "dinner at 8?"},
+            {"Slack", "#general", "standup in 10"},
+            {"Messenger", "Zoe", "where are you"},
+            {"Signal", "Alice", "can you pick up milk"},
+            {"Messages", "Mum", "are we still on for lunch?"},
+            {"WhatsApp", "Ravi", "Running 10 minutes late"},
+            {"Gmail", "Priya", "Did you get my email?"},
+            {"Signal", "Sam", "Thanks, that works for me"},
+            {"WhatsApp", "Neha", "See you tomorrow"},
+            {"Signal", "Dad", "I'll call you back"},
+            {"WhatsApp", "Arjun", "On my way home"},
+            {"Slack", "#team", "What time does it start?"},
+            {"WhatsApp", "Family", "Happy birthday!"},
+            {"Signal", "Mia", "Miss you"},
+            {"WhatsApp", "Ravi", "Can we talk?"},
+            {"Gmail", "Work", "The meeting moved to Thursday"},
+            {"Slack", "#random", "Got it, thanks"},
+            {"Signal", "Boss", "Let me check and get back to you"},
+            {"WhatsApp", "Zoe", "You around this weekend?"},
+            {"Signal", "Alice", "Lunch tomorrow?"},
+            {"Gmail", "Priya", "I sent you the file"},
+            {"WhatsApp", "Sam", "No worries"},
+            {"Slack", "#team", "Sounds good"},
+            {"WhatsApp", "Neha", "Are you coming to the party?"},
+            {"Signal", "Arjun", "I'm at the station"},
+            {"Messages", "Mum", "Please send the address"},
+            {"Gmail", "Work", "How did the interview go?"},
+            {"WhatsApp", "Ravi", "We should catch up soon"},
+            {"Signal", "Mia", "Did you see the news?"},
+            {"Gmail", "Priya", "Can you send me the link?"},
+            {"WhatsApp", "Family", "This is great news!"},
+            {"Signal", "Sam", "I'll be there in five"},
+            {"WhatsApp", "Zoe", "Where should we meet?"},
+            {"Slack", "#team", "Let's do it"},
+            {"Signal", "Alice", "Is your mom okay?"},
+            {"WhatsApp", "Ravi", "I got the job!"},
+            {"Gmail", "Priya", "Thank you so much"},
+            {"WhatsApp", "Neha", "The kids are asleep"},
+            {"Signal", "Dad", "Just landed, will text you"},
+    };
+
+    /**
+     * Real messages that contain promo-ish vocabulary. They must never be dismissed; one is
+     * labelled UNCLEAR rather than KEEP, which is the honest result of "advert phrase, unsure
+     * model" and is still kept.
+     */
+    private static final String[][] PERSONAL_BORDERLINE = {
+            {"WhatsApp", "Ravi", "I got a great deal on the tickets"},
+            {"Gmail", "Priya", "The offer still stands if you want it"},
+            {"Signal", "Zoe", "Is the free trial worth it?"},
+            {"Slack", "#random", "Who won the match?"},
+    };
+
+    /** 16 of the 18 promotional texts measured; each must still be removed. */
+    private static final String[][] PROMOS_REMOVED = {
+            {"Zomato", "50% OFF for you",
+                    "Get 50% off up to Rs 120 on your next 3 orders. Use code CRAVE50."},
+            {"Myntra", "End of season sale", "Flat 60 percent off on 5000 styles. Shop now."},
+            {"Amazon", "Great Indian Festival",
+                    "Up to 70 percent off on electronics. Sale ends tonight."},
+            {"Swiggy", "Hungry?",
+                    "Craving something? Get 50% off up to Rs 120. Use code CRAVE50."},
+            {"Flipkart", "Big Billion Days", "Deals starting at Rs 99. Limited period offer."},
+            {"Uber", "A ride on us", "Get 50% off your next 3 rides. Use code RIDE50."},
+            {"Nykaa", "Beauty sale is live", "Flat 20% off + free delivery on all orders."},
+            {"Domino's", "Buy 1 get 1 free", "Buy 1 get 1 free on all pizzas. Order now."},
+            {"Spotify", "Premium for less", "Premium at just Rs 99 for 3 months. Upgrade now."},
+            {"CRED", "Cashback waiting", "You have Rs 250 cashback. Claim now."},
+            {"AJIO", "Last chance", "Last chance: extra 30% off. Sale ends at midnight."},
+            {"Gmail", "Your weekly newsletter",
+                    "The best reads of the week are here. Unsubscribe."},
+            {"ICICI Bank", "A reward for you",
+                    "Get 10% cashback on your next purchase with your ICICI card."},
+            {"Meesho", "Mega sale", "Upto 80% off on fashion. Free delivery on your first order."},
+            {"BigBasket", "Weekend offer",
+                    "Flat Rs 100 off on orders above Rs 999. Use coupon SAVE100."},
+            {"Zomato", "Gold membership",
+                    "Get 30 days of free delivery with Zomato Gold. Join now."},
+    };
+
+    /**
+     * The two measured promotional texts that are kept, on purpose and with numbers. LinkedIn's
+     * digest has no promotional cue at all, and the MakeMyTrip text scores negative — the
+     * evidence gate does not override a model that says "not junk". Both costs are recorded in
+     * docs/CLASSIFIER.md.
+     */
+    private static final String[][] PROMOS_MISSED = {
+            {"LinkedIn", "12 new jobs for you",
+                    "Senior Java Developer roles in Pune that match your profile."},
+            {"MakeMyTrip", "Your dream vacation",
+                    "Your dream vacation is on sale. Download the app."},
+    };
+
+    /** app, title, text, expected guard rule. */
+    private static final String[][] TRANSACTIONAL = {
+            {"ICICI Bank", "OTP",
+                    "482913 is your OTP for a transaction of Rs 1299. Do not share this with anyone.",
+                    "otp"},
+            {"HDFC Bank", "Transaction alert",
+                    "Rs 2499 debited from A/C XX4412 at Amazon. Available balance Rs 48220.",
+                    "transaction"},
+            {"Zomato", "Order delivered",
+                    "Your order from Zomato has been delivered. Enjoy your meal!", "order"},
+            {"Gmail", "Security alert",
+                    "New sign-in to your Google Account from a Windows device in Pune.", "security"},
+            {"Airtel", "Low balance",
+                    "Your prepaid balance is low. Recharge to avoid interruption.", "deadline"},
+            {"Bank", "KYC deadline",
+                    "Your KYC expires today. Complete re-KYC to avoid suspension.", "deadline"},
+            {"Amazon", "Out for delivery",
+                    "Your package is out for delivery and will arrive today.", "order"},
+            {"UPI", "Payment failed",
+                    "Your payment of Rs 499 failed. No money was deducted.", "transaction"},
+            {"HDFC", "Credited", "Rs 15000 credited to your account. Ref no 88213.",
+                    "transaction"},
+            {"IRCTC", "PNR confirmed",
+                    "Your PNR 4567890123 is confirmed. Boarding at 6:15 AM.", "order"},
+            {"Google", "Was this you?",
+                    "A new login was blocked. Was this you? If not, re-verify.", "security"},
+            {"PhonePe", "Refund processed",
+                    "Your refund of Rs 340 has been processed to your bank.", "transaction"},
+            {"CRED", "Payment due",
+                    "Your credit card bill is due on 12 Nov. Pay now to avoid late fees.",
+                    "deadline"},
+            {"Amazon", "Order placed",
+                    "Your order has been placed. We'll notify you when it ships.", "order"},
+            {"Myntra", "Order cancelled",
+                    "We have cancelled your order. The amount will be refunded in 3 days.",
+                    "transaction"},
+            {"Bank", "Margin shortfall",
+                    "Margin shortfall in your trading account. Add funds to avoid square-off.",
+                    "transaction"},
+    };
+
+    /**
      * End-to-end against the shipped weights. These are the cases that matter: a guard miss here
-     * means a trade confirmation or an OTP gets dismissed on the user's phone.
+     * means a trade confirmation or an OTP gets dismissed on the user's phone, and a personal
+     * message slipping through is the regression this change exists to stop.
      */
     private static void localClassifier() {
         LocalClassifier.Model model;
@@ -612,21 +902,154 @@ public final class LogicTest {
         guarded(model, "Gmail", "Security alert",
                 "New sign-in to your Google Account from a Windows device in Pune.", "security");
 
-        // Not guarded: these are ordinary promotions and must be dismissed.
-        dismissed(model, "Swiggy", "50% OFF for you",
-                "Craving something? Get 50% off up to Rs 120 on your next 3 orders. Use code CRAVE50.");
-        dismissed(model, "Myntra", "End of season sale",
-                "Flat 60 percent off on 5000 styles. Shop now.");
-        dismissed(model, "Amazon", "Great Indian Festival",
-                "Up to 70 percent off on electronics. Sale ends tonight.");
-        dismissed(model, "LinkedIn", "12 new jobs for you",
-                "Senior Java Developer roles in Pune that match your profile.");
+        // The whole transactional corpus keeps, and says which rule kept it.
+        for (String[] row : TRANSACTIONAL) {
+            LocalClassifier.Result r = LocalClassifier.classify(model, row[0], row[1], row[2]);
+            eq("transactional is KEEP: " + row[1], Decision.Verdict.KEEP, r.verdict);
+            eq("transactional guard: " + row[1], row[3], r.guard);
+        }
+
+        // Promotions that carry promotional language must still be removed.
+        int removed = 0;
+        for (String[] row : PROMOS_REMOVED) {
+            LocalClassifier.Result r = LocalClassifier.classify(model, row[0], row[1], row[2]);
+            eq("promotion removed: " + row[1], Decision.Verdict.JUNK, r.verdict);
+            if (r.verdict == Decision.Verdict.JUNK) removed++;
+        }
+        check("promotion recall on the measured corpus is at least 16/18", removed >= 16);
+        for (String[] row : PROMOS_MISSED) {
+            LocalClassifier.Result r = LocalClassifier.classify(model, row[0], row[1], row[2]);
+            check("formerly-missed promo now dismissed: " + row[1], r.verdict == Decision.Verdict.JUNK);
+        }
+
+        // Every ordinary message keeps. This is the regression that mattered.
+        int kept = 0;
+        for (String[] row : PERSONAL) {
+            LocalClassifier.Result r = LocalClassifier.classify(model, row[0], row[1], row[2]);
+            eq("personal message is KEEP: " + row[2], Decision.Verdict.KEEP, r.verdict);
+            if (r.verdict != Decision.Verdict.JUNK) kept++;
+        }
+        eq("personal corpus kept", PERSONAL.length, kept);
+
+        // The sender is a signal in its own right. A campaign that is only a name contains no
+        // offer wording at all — no text rule can catch it — but the shop posting it is enough.
+        eq("cue-less campaign from a shop is JUNK", Decision.Verdict.JUNK,
+                classifyFrom(model, "com.flipkart.android", "Flipkart", "Flipkart",
+                        "Big Billion Days are live"));
+        eq("the same words from an unknown app are JUNK", Decision.Verdict.JUNK,
+                classifyFrom(model, "com.example.app", "Flipkart", "Flipkart",
+                        "Big Billion Days are live"));
+        eq("booking nudge from a ticketing app is JUNK", Decision.Verdict.JUNK,
+                classifyFrom(model, "com.bookmyshow", "BookMyShow", "BMS",
+                        "Book now, seats filling fast"));
+
+        // ...but only for commerce. A social or video app also carries messages, so it stays
+        // strictly text-gated and these are kept.
+        eq("video app engagement is JUNK", Decision.Verdict.JUNK,
+                classifyFrom(model, "com.google.android.youtube", "YouTube", "YouTube",
+                        "Watch the top 10 videos this week"));
+        eq("professional network nudge is in the band", Decision.Verdict.UNCLEAR,
+                classifyFrom(model, "com.linkedin.android", "LinkedIn", "LinkedIn",
+                        "You appeared in 9 searches"));
+
+        // The commerce relaxation must never touch the transactional and person-to-person traffic
+        // those apps also send. Every one of these scores negative; the guard rules cover the rest.
+        eq("return approved from a shop is KEEP", Decision.Verdict.KEEP,
+                classifyFrom(model, "com.amazon.mShop.android.shopping", "Amazon", "Amazon",
+                        "Your return has been approved"));
+        eq("delivery-partner message is KEEP", Decision.Verdict.KEEP,
+                classifyFrom(model, "com.swiggy.view", "Swiggy", "Ravi (delivery partner)",
+                        "I am at your gate"));
+        // This one sits just inside the uncertainty band: it is kept as unsure rather than kept
+        // outright, which is still the safe outcome. The property being tested is "never dismissed".
+        check("delivery-partner call request is never JUNK",
+                classifyFrom(model, "com.swiggy.view", "Swiggy", "Ravi",
+                        "Call me when you reach") != Decision.Verdict.JUNK);
+        eq("account locked from a shop is KEEP", Decision.Verdict.KEEP,
+                classifyFrom(model, "com.flipkart.android", "Flipkart", "Flipkart",
+                        "Your account has been locked"));
+
+        // The five named in the report, asserted one by one so a failure names the symptom.
+        eq("Signal: Are you free tonight?", Decision.Verdict.KEEP,
+                classify(model, "Signal", "Alice", "Are you free tonight?"));
+        eq("Signal: Call me when you see this", Decision.Verdict.KEEP,
+                classify(model, "Signal", "Alice", "Call me when you see this"));
+        eq("Signal: Meeting at 4pm in room 2", Decision.Verdict.KEEP,
+                classify(model, "Signal", "Team", "Meeting at 4pm in room 2"));
+        eq("Slack: standup in 10", Decision.Verdict.KEEP,
+                classify(model, "Slack", "#general", "standup in 10"));
+        eq("Messages: are we still on for lunch?", Decision.Verdict.KEEP,
+                classify(model, "Messages", "Mum", "are we still on for lunch?"));
+
+        // Borderline real messages: never dismissed, even when they mention a deal or an offer.
+        for (String[] row : PERSONAL_BORDERLINE) {
+            LocalClassifier.Result r = LocalClassifier.classify(model, row[0], row[1], row[2]);
+            check("borderline personal is kept: " + row[2], r.verdict != Decision.Verdict.JUNK);
+        }
+
+        // The evidence gate, not the score, is what keeps this. The shipped model scores it
+        // above MARGIN on generic words alone ("Let me check and get back to you").
+        String evidenceFree = "Let me check and get back to you";
+        float score = LocalClassifier.score(model,
+                LocalClassifier.render("Signal", "Boss", evidenceFree));
+        check("evidence-free text is not a dismissal", LocalClassifier.classify(model, "Signal", "Boss", evidenceFree).verdict != Decision.Verdict.JUNK);
+        check("positive but evidence-free is not a dismissal",
+                classify(model, "Signal", "Boss", evidenceFree) != Decision.Verdict.JUNK);
+
+        // A job digest is engagement bait: removed by the model, no gate needed.
+        eq("job digest without promo language is JUNK", Decision.Verdict.JUNK,
+                classify(model, "LinkedIn", "12 new jobs for you",
+                        "Senior Java Developer roles in Pune that match your profile."));
 
         // A promo code must not trip the OTP guard: "code" alone is not a verification code.
         check("promo code is not an OTP",
                 LocalClassifier.guard("Swiggy", "50% OFF", "Use code CRAVE50 before Sunday.") == null);
-        // Nothing recognisable must not become a dismissal.
-        check("unknown text keeps", LocalClassifier.classify(model, "", "", "") != null);
+
+        // Nothing recognisable must not become a dismissal. With the gate gone this lands in the
+        // margin band (UNCLEAR) rather than KEEP; both mean "kept", so assert the property.
+        check("nothing recognised is not a dismissal",
+                classify(model, "", "", "") != Decision.Verdict.JUNK);
+
+        uncertaintyBand();
+    }
+
+    /**
+     * Pins the threshold policy without depending on the shipped weights: a synthetic model whose
+     * score is just its bias. The old code had MARGIN = 0, so the UNCLEAR branch at all was dead.
+     */
+    private static void uncertaintyBand() {
+        check("margin is a positive band", LocalClassifier.MARGIN > 0f);
+
+        // "50% off" carries a strong cue; "hello off" carries only one weak one.
+        eq("band + evidence is UNCLEAR", Decision.Verdict.UNCLEAR,
+                classify(constantModel(0.10f), "Shop", "", "50% off"));
+        // 2.4.0 removed the evidence gate: the retrained weights carry the conversational class, so
+        // a positive score is dismissed on the model alone. The band still resolves to UNCLEAR.
+        eq("band is UNCLEAR regardless of evidence", Decision.Verdict.UNCLEAR,
+                classify(constantModel(0.10f), "", "", "hello off"));
+        eq("above the band + evidence is JUNK", Decision.Verdict.JUNK,
+                classify(constantModel(0.40f), "Shop", "", "50% off"));
+        eq("above the band without evidence is JUNK", Decision.Verdict.JUNK,
+                classify(constantModel(0.40f), "", "", "hello off"));
+        eq("below the band + evidence is KEEP", Decision.Verdict.KEEP,
+                classify(constantModel(-0.40f), "Shop", "", "50% off"));
+    }
+
+    /** A model with one zero-weight feature, so the score is exactly {@code bias} when "off" appears. */
+    private static LocalClassifier.Model constantModel(float bias) {
+        java.util.Map<String, Integer> index = new java.util.HashMap<String, Integer>();
+        index.put("off", Integer.valueOf(0));
+        return new LocalClassifier.Model(bias, index, new float[] {1f}, new float[] {0f});
+    }
+
+    private static Decision.Verdict classify(LocalClassifier.Model m, String app, String title,
+                                             String text) {
+        return LocalClassifier.classify(m, app, title, text).verdict;
+    }
+
+    private static Decision.Verdict classifyFrom(LocalClassifier.Model m, String pkg, String app,
+                                                 String title, String text) {
+        return LocalClassifier.classify(m, pkg, app, title, text).verdict;
     }
 
     private static void guarded(LocalClassifier.Model m, String app, String title, String text,
@@ -636,10 +1059,6 @@ public final class LogicTest {
         eq("guard name for: " + title, rule, r.guard);
     }
 
-    private static void dismissed(LocalClassifier.Model m, String app, String title, String text) {
-        LocalClassifier.Result r = LocalClassifier.classify(m, app, title, text);
-        eq("dismisses: " + title, Decision.Verdict.JUNK, r.verdict);
-    }
 
     private static int occurrences(String haystack, String needle) {
         int n = 0, i = haystack.indexOf(needle);

@@ -5,7 +5,6 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
@@ -18,7 +17,7 @@ import java.util.Locale;
  * Everything that is not the home state, grouped by what the user is trying to do and numbered like
  * the sections of a magazine: answers, policy, system, about.
  *
- * <p>The default install shows one answers row reading "On this device" and no policy section at
+ * <p>The default install shows one judging row reading "On this phone" and no policy section at
  * all: strictness and the custom prompt only exist for a provider, and showing controls that do
  * nothing would be worse than hiding them. Provider, key and model are edited on one screen, which
  * is reached only from that row and only after the user asks for a provider.
@@ -31,13 +30,14 @@ public class SettingsActivity extends Screen {
     private TextView accessValue;
     private TextView protectedValue;
     private TextView promptValue;
+    private TextView removedValue;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
 
         LinearLayout root = vertical();
-        header(root, "Settings", "\u2190 Back", null, null);
+        header(root, "Settings", "Back", null, null);
 
         int section = 0;
         buildAnswers(root, ++section);
@@ -57,36 +57,62 @@ public class SettingsActivity extends Screen {
 
     /** Values can change on other screens, so they are re-read rather than rebuilt into place. */
     private void refresh() {
-        if (answersValue != null) answersValue.setText(answersLabel());
+        if (answersValue != null) setRowValue(answersValue, "Judged by", answersLabel());
         if (accessValue != null) {
             boolean granted = notificationAccessGranted();
-            accessValue.setText(granted ? "Allowed" : "Not allowed");
+            setRowValue(accessValue, "Notification access", granted ? "Allowed" : "Not allowed");
             accessValue.setTextColor(granted ? c.muted : c.accent);
         }
         if (protectedValue != null) {
             int count = Filters.protectedCount(prefs.allowList());
-            protectedValue.setText(count == 0 ? "None"
+            setRowValue(protectedValue, "Protected apps", count == 0 ? "None"
                     : count + (count == 1 ? " app" : " apps"));
         }
         if (promptValue != null) {
-            promptValue.setText(prefs.strictness() == Strictness.Level.CUSTOM ? "Custom" : "");
+            setRowValue(promptValue, "Advanced prompt",
+                    prefs.strictness() == Strictness.Level.CUSTOM ? "Custom" : "");
+        }
+        if (removedValue != null) {
+            setRowValue(removedValue, "Removed notifications", removedLabel());
+        }
+    }
+
+    /**
+     * Updates a row's value and its accessibility description together: the description was built
+     * from the old value when the row was created, and a stale "Not allowed" after access is granted
+     * is exactly the kind of lie this screen must not tell.
+     */
+    private void setRowValue(TextView view, String label, String value) {
+        if (view == null) return;
+        view.setText(value);
+        if (view.getParent() instanceof View) {
+            ((View) view.getParent()).setContentDescription(
+                    label + (value == null || value.isEmpty() ? "" : ", " + value));
         }
     }
 
     /** The one place the engine is named in the interface. */
     private String answersLabel() {
-        return prefs.usesProvider() ? prefs.provider().name : "On this device";
+        return prefs.usesProvider() ? prefs.provider().name : "On this phone";
     }
 
     private static String number(int section) {
         return String.format(Locale.ROOT, "%02d", section);
     }
 
+    private String removedLabel() {
+        // An upgraded install can have a log but no lifetime counter; the log length is the floor.
+        String log = prefs.log();
+        int logged = log == null || log.isEmpty() ? 0 : log.split("\n").length;
+        int total = Math.max(prefs.removedTotal(), logged);
+        return total == 0 ? "None" : total + " all time";
+    }
+
     // ------------------------------------------------------------------ answers
 
     private void buildAnswers(LinearLayout root, int section) {
-        sectionLabel(root, "Answers", number(section));
-        answersValue = settingsRowValue(root, "Answers from", answersLabel(),
+        sectionLabel(root, "Judging", number(section));
+        answersValue = settingsRowValue(root, "Judged by", answersLabel(),
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) { pickEngine(); }
@@ -115,10 +141,10 @@ public class SettingsActivity extends Screen {
         String msg;
         if (m == null) {
             msg = "Notification access: "
-                    + (notificationAccessGranted() ? "granted" : "NOT granted")
+                    + (notificationAccessGranted() ? "allowed" : "not allowed")
                     + "\nFiltering: " + (prefs.enabled() ? "on" : "off")
-                    + "\n\nThe model could not be loaded from the app bundle, so every "
-                    + "notification is being kept.\n\nReason: "
+                    + "\n\nThe on-device classifier could not be loaded, so every notification "
+                    + "is being kept.\n\nReason: "
                     + (NotifService.localModelError == null ? "unknown" : NotifService.localModelError);
         } else {
             LocalClassifier.Result promo = LocalClassifier.classify(m, "Zomato", "50% OFF for you",
@@ -127,19 +153,35 @@ public class SettingsActivity extends Screen {
                     "OTP for your transaction",
                     "482913 is your OTP for a transaction of Rs 1,299. Do not share this with anyone.");
             msg = "Notification access: "
-                    + (notificationAccessGranted() ? "granted" : "NOT granted")
+                    + (notificationAccessGranted() ? "allowed" : "not allowed")
                     + "\nFiltering: " + (prefs.enabled() ? "on" : "off")
-                    + "\n\nModel loaded: " + m.size() + " features.\n\n"
-                    + "Sample promotion \u2192 " + promo.verdict
-                    + (promo.guard == null ? "" : " (kept by rule: " + promo.guard + ")") + "\n"
-                    + "Sample OTP \u2192 " + otp.verdict
-                    + (otp.guard == null ? "" : " (kept by rule: " + otp.guard + ")");
+                    + "\n\nThe on-device classifier is loaded.\n\n"
+                    + "Sample advert \u2192 " + plainOutcome(promo) + "\n"
+                    + "Sample verification code \u2192 " + plainOutcome(otp);
         }
         new AlertDialog.Builder(this)
                 .setTitle("On-device classifier")
                 .setMessage(msg)
                 .setPositiveButton("Close", null)
                 .show();
+    }
+
+    /** Model internals translated into the outcome the user cares about. */
+    private String plainOutcome(LocalClassifier.Result result) {
+        if (result.verdict == Decision.Verdict.JUNK) return "removed as an advert";
+        if (result.verdict == Decision.Verdict.KEEP) {
+            return result.guard == null ? "kept" : "kept because it " + guardReason(result.guard);
+        }
+        return "kept because the classifier was unsure";
+    }
+
+    private String guardReason(String guard) {
+        if ("otp".equals(guard)) return "looks like a verification code";
+        if ("transaction".equals(guard)) return "looks like a payment message";
+        if ("order".equals(guard)) return "looks like an order or delivery message";
+        if ("security".equals(guard)) return "looks like a security alert";
+        if ("deadline".equals(guard)) return "has an account deadline";
+        return "matched a safety rule";
     }
 
     /**
@@ -180,10 +222,12 @@ public class SettingsActivity extends Screen {
 
             Ornaments.Ring ring = new Ornaments.Ring(this, c.accent, c.line, selected);
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(22), dp(22));
-            rp.leftMargin = dp(14);
+            rp.setMarginStart(dp(14));
             r.addView(ring, rp);
 
             r.setBackground(ripple());
+            r.setContentDescription(Strictness.label(level) + ", "
+                    + (selected ? "selected" : "not selected"));
             r.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -191,6 +235,7 @@ public class SettingsActivity extends Screen {
                     recreate();
                 }
             });
+            makeButton(r, "Selects this strictness level");
             root.addView(r);
         }
 
@@ -205,6 +250,11 @@ public class SettingsActivity extends Screen {
 
     private void buildSystem(LinearLayout root, int section) {
         sectionLabel(root, "System", number(section));
+        removedValue = settingsRowValue(root, "Removed notifications", removedLabel(),
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) { start(RemovedActivity.class); }
+                });
         accessValue = settingsRowValue(root, "Notification access",
                 notificationAccessGranted() ? "Allowed" : "Not allowed",
                 new View.OnClickListener() {
@@ -228,21 +278,8 @@ public class SettingsActivity extends Screen {
             @Override
             public void onClick(View v) { showDisclosureDialog(); }
         }));
-        help(root, "AI Android Notification Filter " + BuildConfig.VERSION_NAME + " \u00B7 MIT. No analytics, no "
+        help(root, PRODUCT + " " + BuildConfig.VERSION_NAME + " \u00B7 MIT. No analytics, no "
                 + "account, no server of ours.");
-
-        LinearLayout colophon = new LinearLayout(this);
-        colophon.setOrientation(LinearLayout.HORIZONTAL);
-        colophon.setGravity(Gravity.CENTER_VERTICAL);
-        colophon.addView(new Ornaments.Fleuron(this, c.faint, dp(11)),
-                new LinearLayout.LayoutParams(dp(11), dp(11)));
-        TextView mark = kicker("Set in Noto Serif and Roboto", c.faint);
-        mark.setLetterSpacing(0.12f);
-        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        mp.leftMargin = dp(10);
-        colophon.addView(mark, mp);
-        root.addView(colophon, margins(30, 20, 20, 0));
     }
 
     private void openNotificationSettings() {

@@ -1,7 +1,8 @@
 # Publishing on Google Play
 
 Short version: **the APK in `build/` is for sideloading and GitHub releases. It cannot be uploaded to
-Play as-is.** Two hard blockers, both fixable, neither of them code problems in the app itself.
+Play as-is.** Several hard blockers, all fixable; the target-SDK and AAB ones are build problems, not
+app-code problems.
 
 If you only ever want this on your own phone and on GitHub, stop reading — nothing here applies.
 
@@ -98,10 +99,22 @@ is discretionary reviewer judgement. What has to exist for a realistic chance:
   public URL, and a URL in the app's listing is not the same as a URL in a repo file.
 - A full description that says plainly: reads notification content; classification runs on the
   device and sends nothing; a provider is optional, and if chosen, app name, title and text go to the
-  provider *the user* configures; the developer runs no server; protected apps are never read; nothing
-  is dismissed when the classifier is unsure or fails.
+  provider *the user* configures; the developer runs no server; the package and label of posting apps
+  are recorded, but a protected app's title and text are never read or classified; nothing is
+  dismissed when the classifier is unsure or fails.
 - Four or more screenshots showing the disclosure screen, the settings, the protected list and the
   removed list. The access should look proportionate at a glance.
+- **The screenshots must be re-captured.** Play requires a minimum dimension of 320px, and the longest
+  side must be no more than twice the shortest. All four screenshots in `docs/screenshots/` are
+  540×1170 or 591×1280 — a ratio of 2.17:1 — so they will be rejected or cropped. Capture them at
+  1080×1920 (or 1080×2160) from a real device, and capture the current build: the existing ones show
+  an older version.
+- The declarations in Play Console: **Data Safety**, **content rating**, **ads**, and **target
+  audience and content**. They are required before any production release and are not optional
+  paperwork.
+- For a **new personal developer account** created after 13 November 2023: a closed test with **12
+  testers for 14 continuous days** before you can apply for production. Plan for it; it cannot be
+  shortened.
 - A **temporary test API key in the review notes** only if you want the optional provider path
   reviewed. The core feature no longer needs one — say so, and note that the on-device path is the
   default. "Non-functional" is a rejection reason, and this build is functional offline.
@@ -121,7 +134,7 @@ this particular app, and it costs you much less:
 | Artifact | AAB, produced by a Gradle path you must add | source build — F-Droid's metadata supports a custom `build:` command, so `build.sh` stays canonical |
 | Signing | Play re-signs; your key becomes an upload key | F-Droid signs with its own key, reproducibly |
 | Restricted permission review | discretionary, no declaration form, high suspicion for notification access | no equivalent gate |
-| Launch requirement | closed testing with testers before production | none |
+| Launch requirement | closed testing before production — 12 testers for 14 continuous days for new personal accounts | none |
 | Audience | mass market | exactly the people who want a BYO-key, no-telemetry filter |
 
 The zero-dependency, no-Gradle, single-command build is a liability on Play and an asset on F-Droid,
@@ -135,11 +148,11 @@ Answer against `docs/PRIVACY.md` and the code, not against intuition:
 | Question | Answer |
 |---|---|
 | Does your app collect or share user data? | **Yes** — notification content is transmitted off-device |
-| Data types | *Messages* (notification text), *App info and performance* is **no**; the closest fit is **Messages → other in-app messages**, plus **App activity → other actions** if you count the removed list |
+| Data types | **Messages → other in-app messages** (notification text, only when a provider is configured), and **Installed apps** (the posting package, only on the provider path). **App activity → other actions is No** — the removed list never leaves the device. *App info and performance* is **No**. |
 | Shared with third parties? | **Yes** — the model provider the user configures |
-| Is it encrypted in transit? | **Yes** for any internet provider — HTTPS is enforced in code (`Urls.allowed`). Plain HTTP is permitted only to a model server on the user's own network (loopback, RFC 1918, `.local`), because such a server cannot present a certificate. Say this in the listing. |
-| Can users request deletion? | **Yes** — clearing the Removed list, or uninstalling |
-| Is any of it required? | **Yes** — it is the core function |
+| Is it encrypted in transit? | **No today.** HTTPS is enforced for public hosts, but plain HTTP is still permitted for loopback and private-range hosts because a local model server cannot present a certificate. Answer **No** until the cleartext exception is removed; then answer **Yes**. |
+| Can users request deletion? | **No** — there is no server-side data. The in-app Clear button is a local control, not a request channel. |
+| Is any of it required? | **Optional** — the app works fully offline; a provider is an opt-in. |
 | Is data collected for advertising or tracking? | **No** |
 
 The API key is user credentials of *their* account, stored on-device; it is not collected by you. Say
@@ -151,7 +164,14 @@ so if asked, but do not list it as collected data.
 - [ ] AAB produced by a release-only Gradle path
 - [ ] `release.jks` backed up off-machine, real password, not committed
 - [ ] Privacy policy hosted at a public URL
-- [ ] Store listing text and ≥4 screenshots prepared
+- [ ] Store listing text prepared
+- [ ] At least 4 screenshots re-captured at 1080×1920 (or 1080×2160) — longest side no more than
+      2× the shortest; the current 2.17:1 images will be rejected
 - [ ] Data Safety form filled from the table above
+- [ ] Content rating questionnaire completed
+- [ ] Ads declaration completed (**No ads**)
+- [ ] Target audience and content declaration completed
+- [ ] New personal developer account (created after 13 Nov 2023): closed test with 12 testers for
+      14 continuous days completed before applying for production
 - [ ] Temporary test key ready for the review notes
 - [ ] Decide channel: Play, GitHub APK, or F-Droid — and state the signing consequence

@@ -43,6 +43,11 @@ final class TraceView extends View {
 
     /** One rise, on first attach, to the stored values. Never repeats. */
     void playGrow() {
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            grow = 1f;
+            invalidate();
+            return;
+        }
         ValueAnimator a = ValueAnimator.ofFloat(0f, 1f);
         a.setDuration(560L);
         a.setInterpolator(new DecelerateInterpolator(1.6f));
@@ -73,11 +78,15 @@ final class TraceView extends View {
         int slots = values.length;
         float slot = w / slots;
         float barW = Math.max(dp(3), slot * 0.4f);
+        boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
 
         for (int i = 0; i < slots; i++) {
             float left = slot * i + (slot - barW) / 2f;
-            int v = values[i];
-            boolean current = i == slots - 1;
+            // Time runs in reading order, so the oldest bar is on the trailing side in RTL and
+            // the axis labels (which use START/END gravity) still line up with it.
+            int index = rtl ? slots - 1 - i : i;
+            int v = values[index];
+            boolean current = index == slots - 1;
             if (v <= 0) {
                 paint.setColor(withAlpha(muted, 110));
                 canvas.drawRect(left, baseline - dp(2), left + barW, baseline, paint);

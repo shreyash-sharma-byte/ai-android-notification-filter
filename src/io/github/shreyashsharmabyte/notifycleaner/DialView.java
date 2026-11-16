@@ -48,6 +48,9 @@ final class DialView extends View {
         super(context);
         setClickable(false);
         setFocusable(false);
+        // The reading is laid over this view as real text, and the frame around it carries the
+        // accessible description. The drawing itself is decoration.
+        setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         tick.setStrokeCap(Paint.Cap.BUTT);
         pointer.setStyle(Paint.Style.FILL);
         pointer.setStrokeJoin(Paint.Join.MITER);
@@ -75,6 +78,10 @@ final class DialView extends View {
     }
 
     private void startSweep() {
+        if (sweep != null) return;
+        // An infinite spinner is motion, not information. A reader who has asked the system to
+        // remove animations gets a still pointer, which is still true: it is not judging silently.
+        if (!ValueAnimator.areAnimatorsEnabled()) return;
         sweep = ValueAnimator.ofFloat(0f, 360f);
         sweep.setDuration((long) SWEEP_MS);
         sweep.setRepeatCount(ValueAnimator.INFINITE);
@@ -95,6 +102,17 @@ final class DialView extends View {
             sweep = null;
         }
         sweepDeg = 0f;
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        // Do not keep a looping animator alive behind another activity.
+        if (visibility != VISIBLE) {
+            stopSweep();
+        } else if (state == RUNNING) {
+            startSweep();
+        }
     }
 
     @Override

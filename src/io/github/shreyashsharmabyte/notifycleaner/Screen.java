@@ -2,6 +2,7 @@ package io.github.shreyashsharmabyte.notifycleaner;
 
 import android.animation.ValueAnimator;
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
@@ -13,6 +14,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -58,16 +60,26 @@ abstract class Screen extends Activity {
             this.bad = bad;
         }
 
-        /** Warm paper: cream ground, ink brown-black, one deep vermilion. */
+        /**
+         * Warm paper: cream ground, ink brown-black, one deep vermilion.
+         *
+         * <p>{@code faint} is the app's meaning layer — captions, timestamps, package names — so it
+         * is held at 5.29:1 on the ground and 5.51:1 on the dial face rather than the 2.53:1 it used
+         * to be. It is a reading colour, not a decorative tint; {@link #line} stays decorative.
+         */
         static Palette light() {
             return new Palette(0xFFFBF7EE, 0xFFFFFCF4, 0xFFE3DACA, 0xFF1D1913, 0xFF776D5E,
-                    0xFFA79C8B, 0xFFC1441F, 0xFFFFF8ED, 0xFF516B3B, 0xFFA63A26);
+                    0xFF6F6657, 0xFFC1441F, 0xFFFFF8ED, 0xFF516B3B, 0xFFA63A26);
         }
 
-        /** Warm black: a lamp on paper after dark, the app's natural setting. */
+        /**
+         * Warm black: a lamp on paper after dark, the app's natural setting. {@code faint} is
+         * 5.63:1 on the ground, and {@code bad} is 5.78:1 — the old 4.44:1 failed AA at the sizes
+         * it was used for.
+         */
         static Palette dark() {
             return new Palette(0xFF12100D, 0xFF1B1814, 0xFF322C24, 0xFFF2EADD, 0xFFA1968A,
-                    0xFF75695C, 0xFFE0562F, 0xFF14100C, 0xFF8AA96E, 0xFFC9564A);
+                    0xFF968A7C, 0xFFE0562F, 0xFF14100C, 0xFF8AA96E, 0xFFE06A5C);
         }
 
         static Palette of(Configuration cfg) {
@@ -84,12 +96,24 @@ abstract class Screen extends Activity {
     // Kept as statics: creating a Typeface per row is the one allocation this screen cannot afford.
     private static Typeface SERIF, SERIF_ITALIC, SANS, SANS_MEDIUM, SANS_LIGHT, MONO;
 
+    /** The product name, used where a string constant is cleaner than a per-screen literal. */
+    static final String PRODUCT = "NotifyCleaner";
+
     protected Palette c;
     protected Prefs prefs;
     protected float density;
 
     /** Staggered reveal bookkeeping so a rebuild does not replay the entrance on every resume. */
     private int revealed;
+
+    /** Scroll position survives a rebuild: a refresh must not read as a new page. */
+    private ScrollView lastScroller;
+    private int lastScrollY;
+    private boolean lastHadFooter;
+
+    /** Last animated value per counter, so an unchanged figure is not re-counted from zero. */
+    private final java.util.Map<String, Integer> counterValues =
+            new java.util.HashMap<String, Integer>();
 
     /** Call from onCreate before building any content. */
     protected void initScreen() {
@@ -133,6 +157,13 @@ abstract class Screen extends Activity {
      * separate surface with its own rule, so the button never looks like part of the paragraph.
      */
     protected void setScreenContent(LinearLayout content, View footer) {
+        // Capture where the reader was before the old tree is detached. Coming back from Android's
+        // settings, or pressing pause, must not throw them to the top of the page.
+        if (lastScroller != null) lastScrollY = lastScroller.getScrollY();
+        boolean sameStage = (footer == null) == lastHadFooter;
+        final int restoreY = sameStage ? lastScrollY : 0;
+        lastHadFooter = footer != null;
+
         GradientDrawable ground = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[] { c.bg, mix(c.bg, c.night() ? 0xFF000000 : 0xFFE8DFCC, 0.10f) });
@@ -156,8 +187,8 @@ abstract class Screen extends Activity {
             // must stop above it or it reads as a smudge. The floor is applied here rather than in
             // the screen's own padding: whichever screen pins a footer gets the clearance, whether
             // or not it remembered to leave air at the end of its copy.
-            content.setPadding(content.getPaddingLeft(), content.getPaddingTop(),
-                    content.getPaddingRight(), Math.max(content.getPaddingBottom(), dp(52)));
+            content.setPaddingRelative(content.getPaddingStart(), content.getPaddingTop(),
+                    content.getPaddingEnd(), Math.max(content.getPaddingBottom(), dp(52)));
 
             // The page fades into its foot rather than stopping dead against it: a printed page
             // does not end mid-sentence, and on a phone the soft edge is the only "there is more"
@@ -181,12 +212,23 @@ abstract class Screen extends Activity {
         }
         applyInsets(outer);
         setContentView(outer);
-        revealChildren(content);
+        lastScroller = scroller;
+        if (restoreY > 0) {
+            scroller.post(new Runnable() {
+                @Override
+                public void run() { scroller.scrollTo(0, restoreY); }
+            });
+        }
+        // The entrance is a statement about arriving on a page, not a side effect of refreshing
+        // one. `revealed` was the intended hook and was never read; it is now the guard.
+        if (revealed == 0) {
+            revealed = 1;
+            if (ValueAnimator.areAnimatorsEnabled()) revealChildren(content);
+        }
     }
 
     /** A staircase of 320ms rises, 40ms apart. Purpose: say "this is a new page", once. */
     private void revealChildren(ViewGroup content) {
-        revealed = 0;
         final int n = Math.min(content.getChildCount(), 9);
         for (int i = 0; i < n; i++) {
             final View child = content.getChildAt(i);
@@ -259,7 +301,7 @@ abstract class Screen extends Activity {
     protected TextView kicker(String value, int colour) {
         TextView t = new TextView(this);
         t.setText(value == null ? "" : value.toUpperCase(java.util.Locale.ROOT));
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         t.setTextColor(colour);
         t.setTypeface(SANS_MEDIUM);
         t.setLetterSpacing(0.17f);
@@ -292,25 +334,34 @@ abstract class Screen extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(20), dp(20), dp(20), 0);
+        row.setPaddingRelative(dp(20), dp(20), dp(20), 0);
 
         Ornaments.Fleuron mark = new Ornaments.Fleuron(this, c.accent, dp(15));
+        mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(15), dp(15));
-        mp.rightMargin = dp(10);
+        mp.setMarginEnd(dp(10));
         row.addView(mark, mp);
 
-        TextView word = kicker("AI Android Notification Filter", c.ink);
-        word.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
-        // The full product name needs two lines at this size; truncating it would hide it.
+        TextView word = kicker(PRODUCT, c.ink);
+        word.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         word.setLetterSpacing(0.14f);
-        word.setMaxLines(2);
+        // The name is short now; one line, and ellipsised rather than clipped if a large font
+        // scale or a narrow screen leaves no room.
+        word.setSingleLine(true);
+        word.setEllipsize(TextUtils.TruncateAt.END);
+        word.setMaxLines(1);
         row.addView(word, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        if (meta != null) {
+        if (meta != null && !meta.isEmpty()) {
             TextView m = kicker(meta, c.faint);
             m.setLetterSpacing(0.12f);
-            row.addView(m);
+            m.setSingleLine(true);
+            m.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            mlp.setMarginStart(dp(12));
+            row.addView(m, mlp);
         }
         root.addView(row);
         root.addView(rule(), margins(20, 20, 20, 0));
@@ -326,16 +377,17 @@ abstract class Screen extends Activity {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(16), dp(14), dp(16), 0);
+        bar.setPaddingRelative(dp(16), dp(6), dp(16), 0);
 
         if (backLabel != null) {
-            TextView back = backMark();
+            TextView back = backMark(backLabel);
             bar.addView(back);
         } else {
             Ornaments.Fleuron mark = new Ornaments.Fleuron(this, c.accent, dp(13));
+            mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(13), dp(13));
-            mp.leftMargin = dp(6);
-            mp.rightMargin = dp(10);
+            mp.setMarginStart(dp(6));
+            mp.setMarginEnd(dp(10));
             bar.addView(mark, mp);
         }
 
@@ -351,32 +403,57 @@ abstract class Screen extends Activity {
         root.addView(rule(), margins(18, 20, 20, 0));
     }
 
-    /** "Back" as a small-capped rule-and-word, not a chevron glyph. */
-    private TextView backMark() {
-        TextView back = kicker("\u2190  Back", c.ink);
-        back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
-        back.setPadding(dp(6), dp(12), dp(14), dp(12));
+    /** "Back" as a small-capped rule-and-word, wrong-way round in a right-to-left layout. */
+    private TextView backMark(String label) {
+        String arrow = rtl() ? "\u2192" : "\u2190";
+        String word = label == null ? "Back"
+                : label.replace("\u2190", "").replace("\u2192", "")
+                        .replace("\u2039", "").replace("\u203A", "").trim();
+        if (word.isEmpty()) word = "Back";
+        TextView back = kicker(arrow + "  " + word, c.ink);
+        back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        back.setPaddingRelative(dp(6), dp(12), dp(14), dp(12));
         back.setBackground(ripple());
         back.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) { finish(); }
         });
+        minTouchTarget(back);
+        makeButton(back, null);
         return back;
     }
 
+    /**
+     * A hairline. The height is set <em>and</em> made a minimum, because callers pass
+     * {@link #margins} to {@code addView}, which replaces the view's own params. Inside a
+     * {@link ScrollView} a background-only view measured with an UNSPECIFIED height resolves to
+     * its suggested minimum — which was zero until this was added, so every rule in the app was
+     * invisible.
+     */
     protected View rule() {
         View line = new View(this);
         line.setBackgroundColor(c.line);
+        int thickness = Math.max(1, dp(0.7f));
+        line.setMinimumHeight(thickness);
         line.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(0.7f))));
+                ViewGroup.LayoutParams.MATCH_PARENT, thickness));
+        line.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         return line;
     }
 
-    /** A short, thick rule in the accent: the page's one piece of punctuation. */
+    /**
+     * A short, thick rule in the accent: the page's one piece of punctuation. Width is set as a
+     * minimum too, and {@link #margins(View, int, int, int, int)} is used at the call site so the
+     * intended 44dp measure is not replaced with MATCH_PARENT.
+     */
     protected View accentRule(int widthDp) {
         View line = new View(this);
         line.setBackgroundColor(c.accent);
-        line.setLayoutParams(new LinearLayout.LayoutParams(dp(widthDp), dp(2)));
+        int thickness = Math.max(1, dp(2));
+        line.setMinimumWidth(dp(widthDp));
+        line.setMinimumHeight(thickness);
+        line.setLayoutParams(new LinearLayout.LayoutParams(dp(widthDp), thickness));
+        line.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         return line;
     }
 
@@ -396,7 +473,7 @@ abstract class Screen extends Activity {
             n.setLetterSpacing(0.1f);
             LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            np.rightMargin = dp(10);
+            np.setMarginEnd(dp(10));
             row.addView(n, np);
         }
         row.addView(kicker(value, c.muted));
@@ -410,9 +487,8 @@ abstract class Screen extends Activity {
     }
 
     protected void divider(LinearLayout parent) {
-        View line = new View(this);
-        line.setBackgroundColor(c.line);
-        parent.addView(line, margins(0, 20, 20, 0));
+        View line = rule();
+        parent.addView(line, margins(line, 0, 20, 20, 0));
     }
 
     /** A paragraph of body copy, in the secondary voice. */
@@ -430,7 +506,7 @@ abstract class Screen extends Activity {
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setGravity(Gravity.CENTER_VERTICAL);
         r.setMinimumHeight(dp(58));
-        r.setPadding(dp(20), dp(4), dp(20), dp(4));
+        r.setPaddingRelative(dp(20), dp(4), dp(20), dp(4));
         return r;
     }
 
@@ -444,6 +520,8 @@ abstract class Screen extends Activity {
         if (tappable) {
             r.setBackground(ripple());
             r.setOnClickListener(listener);
+            r.setContentDescription(label + (value == null || value.isEmpty() ? "" : ", " + value));
+            makeButton(r, "Opens " + label);
         }
         return r;
     }
@@ -459,7 +537,7 @@ abstract class Screen extends Activity {
         TextView n = figure(index, 20, c.accent);
         LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(dp(30),
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        np.rightMargin = dp(6);
+        np.setMarginEnd(dp(6));
         r.addView(n, np);
         r.addView(text(label, 15, c.ink, false),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -469,12 +547,14 @@ abstract class Screen extends Activity {
             TextView v = figure(value, 16, c.ink);
             LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            vp.rightMargin = dp(6);
+            vp.setMarginEnd(dp(6));
             r.addView(v, vp);
         }
         r.addView(chevron());
         r.setBackground(ripple());
         r.setOnClickListener(listener);
+        r.setContentDescription(label + (value == null || value.isEmpty() ? "" : ", " + value));
+        makeButton(r, "Opens " + label);
         return r;
     }
 
@@ -488,6 +568,8 @@ abstract class Screen extends Activity {
         r.addView(chevron());
         r.setBackground(ripple());
         r.setOnClickListener(listener);
+        r.setContentDescription(label + (value == null || value.isEmpty() ? "" : ", " + value));
+        makeButton(r, "Opens " + label);
         parent.addView(r);
         return v;
     }
@@ -502,11 +584,13 @@ abstract class Screen extends Activity {
     }
 
     protected TextView chevron() {
-        TextView t = text("\u2192", 15, c.faint, false);
+        // A literal arrow has to be mirrored explicitly in a right-to-left layout.
+        TextView t = text(rtl() ? "\u2190" : "\u2192", 15, c.faint, false);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        p.leftMargin = dp(12);
+        p.setMarginStart(dp(12));
         t.setLayoutParams(p);
+        t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         return t;
     }
 
@@ -515,7 +599,7 @@ abstract class Screen extends Activity {
     protected void addButton(LinearLayout parent, TextView button) {
         LinearLayout holder = new LinearLayout(this);
         holder.setOrientation(LinearLayout.VERTICAL);
-        holder.setPadding(dp(20), dp(14), dp(20), dp(8));
+        holder.setPaddingRelative(dp(20), dp(14), dp(20), dp(8));
         holder.addView(button, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         parent.addView(holder);
@@ -524,11 +608,13 @@ abstract class Screen extends Activity {
     /** Trailing header action, set as a small cap rather than a chunky button. */
     protected TextView action(String label, boolean primary, View.OnClickListener listener) {
         TextView t = kicker(label, primary ? c.accent : c.muted);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
-        t.setPadding(dp(10), dp(12), dp(6), dp(12));
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        t.setPaddingRelative(dp(10), dp(12), dp(10), dp(12));
         t.setBackground(ripple());
         t.setGravity(Gravity.CENTER);
         t.setOnClickListener(listener);
+        minTouchTarget(t);
+        makeButton(t, null);
         return t;
     }
 
@@ -537,9 +623,10 @@ abstract class Screen extends Activity {
         t.setGravity(Gravity.CENTER);
         t.setMinHeight(dp(54));
         t.setLetterSpacing(0.12f);
-        t.setPadding(dp(18), dp(16), dp(18), dp(16));
+        t.setPaddingRelative(dp(18), dp(16), dp(18), dp(16));
         t.setOnClickListener(listener);
         styleButton(t, true);
+        makeButton(t, null);
         return t;
     }
 
@@ -548,9 +635,10 @@ abstract class Screen extends Activity {
         t.setGravity(Gravity.CENTER);
         t.setMinHeight(dp(54));
         t.setLetterSpacing(0.12f);
-        t.setPadding(dp(18), dp(16), dp(18), dp(16));
+        t.setPaddingRelative(dp(18), dp(16), dp(18), dp(16));
         t.setOnClickListener(listener);
         styleButton(t, false);
+        makeButton(t, null);
         return t;
     }
 
@@ -569,6 +657,124 @@ abstract class Screen extends Activity {
         button.setTypeface(SANS_MEDIUM);
     }
 
+    // ------------------------------------------------------------------ accessibility
+
+    /**
+     * A TextView with a click listener is announced as text, not as a button. Setting the node's
+     * class to Button — and, where it helps, a role description — is the difference between
+     * "Pause filtering" and "Pause filtering, button" in TalkBack.
+     */
+    protected void makeButton(View view, final String role) {
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override
+            public void onInitializeAccessibilityNodeInfo(View host,
+                                                          android.view.accessibility.AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName("android.widget.Button");
+                info.setClickable(true);
+                info.setFocusable(true);
+                if (role != null && !role.isEmpty()) {
+                    // This SDK has no setRoleDescription; append the role to an existing
+                    // description rather than replacing the label the node already carries.
+                    CharSequence base = host.getContentDescription();
+                    if (base != null && base.length() > 0
+                            && !base.toString().contains(role)) {
+                        info.setContentDescription(base + ", " + role);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Enforces the 48dp minimum touch target. {@code setMinWidth}/{@code setMinHeight} grow the
+     * view itself; a TouchDelegate on the parent grows the hit rectangle of a view that still lays
+     * out smaller than that (a header action in a tight bar) without changing its measured size.
+     */
+    protected void minTouchTarget(final View view) {
+        view.setMinimumWidth(dp(48));
+        view.setMinimumHeight(dp(48));
+        // One combined delegate per parent: several small controls can share a bar.
+        view.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b,
+                                       int ol, int ot, int or, int ob) {
+                if (!(v.getParent() instanceof ViewGroup)) return;
+                if (CombinedTouchDelegate.registered(v)) return;
+                ViewGroup parent = (ViewGroup) v.getParent();
+                int[] loc = new int[2];
+                int[] ploc = new int[2];
+                v.getLocationInWindow(loc);
+                parent.getLocationInWindow(ploc);
+                int x = loc[0] - ploc[0];
+                int y = loc[1] - ploc[1];
+                int growX = Math.max(0, (dp(48) - v.getWidth()) / 2);
+                int growY = Math.max(0, (dp(48) - v.getHeight()) / 2);
+                android.graphics.Rect rect = new android.graphics.Rect(
+                        x - growX, y - growY, x + v.getWidth() + growX, y + v.getHeight() + growY);
+                CombinedTouchDelegate group = CombinedTouchDelegate.forParent(parent);
+                group.add(rect, v);
+            }
+        });
+    }
+
+    /** Marks a drawn ornament as decoration: TalkBack skips it instead of reading a blank node. */
+    protected void decorative(View view) {
+        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        view.setFocusable(false);
+        view.setClickable(false);
+    }
+
+    /**
+     * Accumulates delegates for several children of one parent, because
+     * {@link ViewGroup#setTouchDelegate} holds a single delegate.
+     */
+    private static final class CombinedTouchDelegate extends android.view.TouchDelegate {
+        private static final int PARENT_KEY = 0x6E630001;
+        private static final int CHILD_KEY = 0x6E630002;
+        private final java.util.List<android.view.TouchDelegate> delegates =
+                new java.util.ArrayList<android.view.TouchDelegate>();
+
+        private CombinedTouchDelegate(android.graphics.Rect bounds, View view) {
+            super(bounds, view);
+        }
+
+        static CombinedTouchDelegate forParent(ViewGroup parent) {
+            Object existing = parent.getTag(PARENT_KEY);
+            if (existing instanceof CombinedTouchDelegate) return (CombinedTouchDelegate) existing;
+            CombinedTouchDelegate group = new CombinedTouchDelegate(new android.graphics.Rect(),
+                    parent);
+            parent.setTag(PARENT_KEY, group);
+            parent.setTouchDelegate(group);
+            return group;
+        }
+
+        static boolean registered(View child) {
+            return Boolean.TRUE.equals(child.getTag(CHILD_KEY));
+        }
+
+        void add(android.graphics.Rect bounds, View view) {
+            delegates.add(new android.view.TouchDelegate(bounds, view));
+            view.setTag(CHILD_KEY, Boolean.TRUE);
+        }
+
+        @Override
+        public boolean onTouchEvent(android.view.MotionEvent event) {
+            for (int i = 0; i < delegates.size(); i++) {
+                if (delegates.get(i).onTouchEvent(event)) return true;
+            }
+            return false;
+        }
+    }
+
+    /** True when the current layout direction is right-to-left. */
+    protected boolean rtl() {
+        return getResources().getConfiguration().getLayoutDirection()
+                == View.LAYOUT_DIRECTION_RTL;
+    }
+
     protected Drawable ripple() {
         TypedValue out = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, out, true);
@@ -579,8 +785,30 @@ abstract class Screen extends Activity {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         p.topMargin = dp(topDp);
-        p.leftMargin = dp(leftDp);
-        p.rightMargin = dp(rightDp);
+        p.setMarginStart(dp(leftDp));
+        p.setMarginEnd(dp(rightDp));
+        p.bottomMargin = dp(bottomDp);
+        return p;
+    }
+
+    /**
+     * Margins applied to the params a view already has, rather than replacing them. Used wherever
+     * the view's own width or height carries meaning — a 44dp accent rule, a 48dp touch target —
+     * because {@link #margins(int, int, int, int)} would otherwise turn it into a full-width
+     * WRAP_CONTENT view.
+     */
+    protected LinearLayout.LayoutParams margins(View view, int topDp, int leftDp, int rightDp,
+                                                int bottomDp) {
+        LinearLayout.LayoutParams p;
+        if (view.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+            p = (LinearLayout.LayoutParams) view.getLayoutParams();
+        } else {
+            p = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        p.topMargin = dp(topDp);
+        p.setMarginStart(dp(leftDp));
+        p.setMarginEnd(dp(rightDp));
         p.bottomMargin = dp(bottomDp);
         return p;
     }
@@ -597,9 +825,9 @@ abstract class Screen extends Activity {
     protected void showAnswersChooser(final Runnable onChanged) {
         final boolean onProvider = prefs.usesProvider();
         new android.app.AlertDialog.Builder(this)
-                .setTitle("Where answers come from")
+                .setTitle("How notifications are judged")
                 .setSingleChoiceItems(new String[] {
-                        "On this device \u2014 nothing leaves the phone",
+                        "On this phone \u2014 nothing leaves it",
                         "A provider you choose \u2014 text is sent to them"
                 }, onProvider ? 1 : 0, new android.content.DialogInterface.OnClickListener() {
                     @Override
@@ -626,13 +854,18 @@ abstract class Screen extends Activity {
 
     // ------------------------------------------------------------------ motion
 
-    /** Counts a figure up to its value in 620ms. Only ever used for a number that means something. */
-    protected void countUp(final TextView view, final int target) {
-        if (target <= 0) {
-            view.setText("0");
-            return;
-        }
-        ValueAnimator a = ValueAnimator.ofInt(0, target);
+    /**
+     * Counts a figure to its value. The first render animates from zero; a refresh with the same
+     * value simply prints it, because a number visibly falling to zero and climbing back reads as
+     * data loss in an app that deletes things. Honours the system animation setting.
+     */
+    protected void countUp(final TextView view, String key, final int target) {
+        Integer previous = counterValues.get(key);
+        counterValues.put(key, target);
+        view.setText(String.valueOf(target));
+        if (previous != null && previous.intValue() == target) return;
+        if (!ValueAnimator.areAnimatorsEnabled()) return;
+        ValueAnimator a = ValueAnimator.ofInt(previous == null ? 0 : previous.intValue(), target);
         a.setDuration(620L);
         a.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
@@ -671,16 +904,21 @@ abstract class Screen extends Activity {
      * disclosure ({@link #providerDisclosure}).
      */
     protected static final String DISCLOSURE_TEXT =
-            "AI Android Notification Filter reads your notifications so it can decide which are junk. It decides "
+            PRODUCT + " reads your notifications so it can decide which are junk. It decides "
             + "on this phone, with a small classifier that is part of the app.\n\n"
             + "\u2022 Nothing leaves this device. There is no account, no server of ours, and no "
             + "network request at all in the default setup.\n"
-            + "\u2022 It reads the app name, title and text of notifications, unless the app is on "
-            + "your protected list.\n"
+            + "\u2022 It reads the notification title and text, and records the posting app's "
+            + "name and label.\n"
+            + "\u2022 Notifications from apps on your protected list are never classified. Their "
+            + "app name is still recorded, but never sent.\n"
             + "\u2022 Promotions, sales and newsletters are removed. Messages, verification codes, "
             + "payments, orders, security alerts and anything uncertain are kept.\n"
-            + "\u2022 Long text is shortened before it is classified: the beginning and the end "
-            + "are kept.\n"
+            + "\u2022 Apps are recognised too: a notification from a shop, food-delivery or travel "
+            + "app is judged more readily as an offer, while chat, mail, calls, codes and banking "
+            + "apps are on your protected list from the start.\n"
+            + "\u2022 On the optional provider path, long text is shortened before it is sent: "
+            + "the beginning and the end are kept.\n"
             + "\u2022 The removed list is stored on this device only.\n\n"
             + "Only if you choose your own provider in Settings does notification text leave the "
             + "phone. That is off by default, it needs a second, provider-specific agreement, and "
@@ -700,8 +938,9 @@ abstract class Screen extends Activity {
                 + "text leave this device and are sent to " + to + ".\n"
                 + "\u2022 The request uses your own API key, and " + name + "'s terms and privacy "
                 + "policy apply to what it receives.\n"
-                + "\u2022 Apps on your protected list are never read, and calls, alarms, media and "
-                + "other functional notifications are never sent.\n"
+                + "\u2022 The title and text of apps on your protected list are never read or "
+                + "sent, and calls, alarms, media and other functional notifications are never "
+                + "sent.\n"
                 + "\u2022 Nothing is sent anywhere else. This project runs no server of its own.\n"
                 + "\u2022 If the provider fails, is rate limited or is unsure, the notification "
                 + "is kept.\n\n"
@@ -718,8 +957,15 @@ abstract class Screen extends Activity {
         String message = DISCLOSURE_TEXT;
         if (prefs.usesProvider()) {
             Providers.Preset preset = prefs.provider();
+            String host = hostFor(preset);
+            if (host.isEmpty()) {
+                // Custom presets carry no fixed base; name the endpoint actually stored.
+                String stored = Urls.hostOf(prefs.base());
+                if (stored != null) host = stored;
+            }
             message = message + "\n\nRight now you are using " + preset.name + ". Notification "
-                    + "text is sent to " + hostFor(preset) + " only while that setting is on.";
+                    + "text is sent to " + (host.isEmpty() ? "the endpoint you configured" : host)
+                    + " only while that setting is on.";
         }
         new android.app.AlertDialog.Builder(this)
                 .setTitle("What leaves your device")
@@ -746,8 +992,8 @@ abstract class Screen extends Activity {
         body.setLineSpacing(dp(6), 1f);
         // The edge is the view's own background, so it is exactly as tall as the text it marks —
         // no sibling to measure, and nothing that can collapse in a wrap_content column.
-        body.setBackground(new Ornaments.LeftRule(c.accent, dp(2)));
-        body.setPadding(dp(16), dp(2), 0, dp(2));
+        body.setBackground(new Ornaments.LeftRule(c.accent, dp(2), rtl()));
+        body.setPaddingRelative(dp(16), dp(2), 0, dp(2));
         parent.addView(body, margins(4, 20, 24, 4));
         return body;
     }
@@ -843,12 +1089,26 @@ abstract class Screen extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(flags);
     }
 
-    /** Shared: does the system currently consider this app a notification listener? */
+    /**
+     * Shared: does the system currently list this app as a notification listener? Compares full
+     * component names, not a substring of the settings value: a package whose name merely contains
+     * this one must not read as granted.
+     */
     protected boolean notificationAccessGranted() {
         try {
             String enabled = android.provider.Settings.Secure.getString(getContentResolver(),
                     "enabled_notification_listeners");
-            return enabled != null && enabled.contains(getPackageName());
+            if (enabled == null || enabled.isEmpty()) return false;
+            ComponentName mine = new ComponentName(this, NotifService.class);
+            TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
+            splitter.setString(enabled);
+            while (splitter.hasNext()) {
+                String part = splitter.next();
+                ComponentName listed = ComponentName.unflattenFromString(
+                        part == null ? "" : part.trim());
+                if (mine.equals(listed)) return true;
+            }
+            return false;
         } catch (Exception e) {
             return false;
         }

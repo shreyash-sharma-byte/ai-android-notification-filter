@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,41 +22,50 @@ import java.util.Locale;
  * The whole app on one page, set three ways.
  *
  * <ol>
- *   <li><b>The cover.</b> Before anything is read: the pledge, the disclosure as a pull-quote, and
- *       one affirmative button. Nothing else is offered, because nothing else may happen yet.</li>
+ *   <li><b>The cover.</b> Before consent: what will actually happen, the disclosure, the next three
+ *       steps, and two buttons — agree, or not now.</li>
  *   <li><b>The contents.</b> Consented but not ready: only the missing items, numbered, each row
- *       fixing exactly that one thing, with one button for the next one. No dial here — a setup
- *       list is not an instrument, and the dial is never allowed to stand in for progress.</li>
- *   <li><b>The page.</b> Ready or running: the state on one line, then the page's instrument set
- *       large enough to be the thing you look at first — a dial whose pointer only turns while
- *       filtering runs, with the hour's figure and the removal load inside it — then three
- *       counters, a twelve-hour trace, a ranked sender table, and Editorial's own closing
- *       furniture: the rule, and the contents.</li>
+ *       fixing exactly that one thing, with the on/off control always present.</li>
+ *   <li><b>The page.</b> Ready or running: one plain status sentence, then the page's instrument
+ *       set large enough to be the thing you look at first — a dial whose pointer only turns while
+ *       filtering is actually connected, with the hour's figure inside it — then the counters, a
+ *       twelve-hour trace, a ranked sender table, and the closing promise.</li>
  * </ol>
  *
- * <p>Nothing on this page explains what the page already shows. The state line states the state,
- * the dial states the load, the counters are counts of things the app wrote down, and the
- * disclosure — the one paragraph that must be complete — is on the cover where consent is given.
+ * <p>The status sentence is the one statement this page may not get wrong. It is derived from
+ * {@link NotifService#isConnected()} — the system's own bind — and from the last notification the
+ * listener actually received, never from the stored enabled flag alone.
  *
- * <p>Every drawn element on the page reads from what the app already stores: the removal log, the
- * protected list, the seen-apps index, the last verdict, the dropped counter. Nothing is
- * instrumented for the look of it, and nothing is invented when a reading is absent — an empty
- * table says so in a sentence instead of drawing a placeholder.
+ * <p>Every drawn element reads from what the app already stores: the removal log, the lifetime
+ * removal counter, the protected list, the seen-apps index, the last verdict, the dropped counter.
+ * Nothing is instrumented for the look of it, and nothing is invented when a reading is absent.
  *
- * <p>Activation is still the only thing that enables filtering, and it is still a button on this
- * screen that says so. Consent writes consent; reading the disclosure writes nothing; editing a
- * field writes that field. This class only ever calls {@code setConsented} from the cover's button
- * and {@code setEnabled} from the on/off button.
- *
- * <p>Content is built in {@code onResume} because that is the hook that also fires when the user
- * returns from Android's notification-access screen, which is the one place this flow leaves the
- * app and must survive coming back.
+ * <p>Content is rebuilt in {@code onResume} because that is the hook that also fires when the user
+ * returns from Android's notification-access screen. The entrance animation and the counters are
+ * guarded so a rebuild is a refresh, not a new page.
  */
 public class HomeActivity extends Screen {
 
     /** One snapshot per build: the page is a single reading, not five staggered ones. */
     private Telemetry.Snapshot t;
     private long now;
+
+    /**
+     * How long a silent phone has to be silent before a missing listener binding is reported as a
+     * fault rather than as "waiting". Six hours is long enough that no ordinary quiet period (a
+     * night's sleep, a flight) produces the alarm, and short enough that a listener killed by an
+     * OEM battery manager is visible the same day.
+     */
+    private static final long STALL_MS = 6L * 60L * 60L * 1000L;
+
+    /** The trace rises once per visit; a resume is a refresh, not a re-entry. */
+    private boolean traceGrown;
+
+    /**
+     * "Not now" is a decision for this visit only, so it is deliberately not written anywhere.
+     * Leaving the activity or the process returns the cover; consent is never implied by reading.
+     */
+    private boolean readOnly;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -75,40 +85,55 @@ public class HomeActivity extends Screen {
                 prefs.lastVerdict(), prefs.lastAt(), prefs.lastError(), now);
 
         LinearLayout root = vertical();
-        masthead(root, "No. " + BuildConfig.VERSION_NAME);
+        masthead(root, null);
         View footer = null;
-        if (prefs.consented()) buildState(root);
-        else footer = buildCover(root);
+        if (prefs.consented()) {
+            buildState(root);
+        } else if (readOnly) {
+            buildReadOnly(root);
+        } else {
+            footer = buildCover(root);
+        }
         setScreenContent(root, footer);
     }
 
     // ------------------------------------------------------------------ the cover
 
     /**
-     * The disclosure, shown before anything can be read, and one affirmative button.
+     * The disclosure, shown before anything is classified, and two buttons: one affirmative, one
+     * that leaves consent and storage alone.
      *
-     * <p>The closing line is not decoration: Play requires that consent is informed and specific,
-     * and the user deserves to know that agreeing is not the same as switching filtering on.
+     * <p>The headline says what happens rather than what the app is like. "Edited" read like a
+     * digest; removal from the shade is the fact a person has to understand before agreeing.
      */
     private View buildCover(LinearLayout root) {
-        root.addView(kicker("Before anything is read", c.accent), margins(34, 20, 20, 14));
+        root.addView(kicker("Before you agree", c.accent), margins(34, 20, 20, 14));
 
-        TextView headline = display("Your notifications,\nedited.", 36, c.ink);
+        TextView headline = display("Adverts out.\nMessages kept.", 36, c.ink);
         root.addView(headline, margins(0, 20, 24, 16));
 
-        TextView lede = text("AI Android Notification Filter reads each notification and asks one question, on this "
-                + "phone: is this junk? Promotions, sales and newsletters go. Messages, codes, "
-                + "payments and anything uncertain stay.", 14, c.muted, false);
+        TextView lede = text("If a notification looks like an ad, a sale or a newsletter, "
+                + PRODUCT + " removes it from your notification shade automatically. It cannot "
+                + "be brought back. Messages, codes, payments and anything it is unsure about are "
+                + "left alone.", 14, c.muted, false);
         lede.setLineSpacing(dp(5), 1f);
         root.addView(lede, margins(0, 20, 24, 0));
 
-        root.addView(accentRule(44), margins(26, 20, 20, 26));
+        View accent = accentRule(44);
+        root.addView(accent, margins(accent, 26, 20, 20, 26));
 
         root.addView(kicker("Nothing leaves your device", c.ink), margins(0, 20, 20, 12));
         pullQuote(root, DISCLOSURE_TEXT, 13);
 
-        root.addView(meta("\u2014 Nothing is read, and nothing leaves this phone, until you agree."),
-                margins(16, 20, 24, 0));
+        root.addView(kicker("What happens next", c.ink), margins(26, 20, 20, 10));
+        TextView steps = text("1. You allow notification access in Android's settings.\n"
+                + "2. You turn filtering on when you are ready.\n"
+                + "3. Anything removed appears in the Removed list.", 14, c.muted, false);
+        steps.setLineSpacing(dp(5), 1f);
+        root.addView(steps, margins(0, 20, 24, 0));
+
+        root.addView(meta("\u2014 Before you agree, no notification is classified and nothing "
+                + "leaves this phone."), margins(16, 20, 24, 0));
 
         // Sea room at the end of the notice, so its last line is never the thing under the fade.
         root.addView(new View(this), new LinearLayout.LayoutParams(
@@ -126,7 +151,15 @@ public class HomeActivity extends Screen {
 
         LinearLayout inner = new LinearLayout(this);
         inner.setOrientation(LinearLayout.VERTICAL);
-        inner.setPadding(dp(20), dp(12), dp(20), dp(14));
+        inner.setPaddingRelative(dp(20), dp(12), dp(20), dp(14));
+
+        // The consequence belongs above the button, at reading size, in the colour the rest of the
+        // page's body copy uses — not below it as a caption in the faintest ink.
+        TextView note = text("Filtering stays off until you turn it on yourself. Agreeing only lets "
+                + "the app read notification content for filtering.", 14, c.muted, false);
+        note.setLineSpacing(dp(4), 1f);
+        inner.addView(note, margins(0, 0, 4, 12));
+
         inner.addView(primaryButton("I agree", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -134,12 +167,53 @@ public class HomeActivity extends Screen {
                 render();
             }
         }));
-        TextView note = text("Agreeing lets the app read notifications. Filtering stays off until "
-                + "you turn it on yourself.", 11.5f, c.faint, false);
-        note.setLineSpacing(dp(3), 1f);
-        inner.addView(note, margins(9, 0, 4, 0));
+
+        TextView notNow = secondaryButton("Not now", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // Nothing is written: this is an in-memory decision for this visit.
+                readOnly = true;
+                render();
+            }
+        });
+        inner.addView(notNow, margins(10, 0, 0, 0));
         footer.addView(inner);
         return footer;
+    }
+
+    /** The app with filtering off and no consent. It can be read; it cannot act. */
+    private void buildReadOnly(LinearLayout root) {
+        root.addView(stateLine(c.muted, "Filtering is off"), margins(26, 20, 20, 0));
+        TextView why = text("You have not agreed to let " + PRODUCT + " read notification content, "
+                + "so it cannot filter anything and nothing has been switched on.", 14, c.muted,
+                false);
+        why.setLineSpacing(dp(4), 1f);
+        root.addView(why, margins(12, 20, 24, 0));
+
+        root.addView(kicker("What you can read", c.muted), margins(28, 20, 20, 6));
+        root.addView(settingsRow("Removed notifications", removedLabel(), true,
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) { start(RemovedActivity.class); }
+                }));
+        root.addView(settingsRow("Settings", null, true, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { start(SettingsActivity.class); }
+        }));
+        root.addView(settingsRow("What leaves your device", null, true,
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) { showDisclosureDialog(); }
+                }));
+        root.addView(rule(), margins(18, 20, 20, 0));
+
+        addButton(root, primaryButton("Read the notice again", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                readOnly = false;
+                render();
+            }
+        }));
     }
 
     // ------------------------------------------------------------------ the page
@@ -147,68 +221,53 @@ public class HomeActivity extends Screen {
     private void buildState(LinearLayout root) {
         boolean granted = notificationAccessGranted();
         // Offline is ready with nothing configured; a provider is ready only once it is complete
-        // and agreed to. Everything else about this page is unchanged.
+        // and agreed to. Both are independent of whether Android still has the listener bound.
         boolean ready = prefs.ready();
         boolean on = prefs.enabled();
+        boolean connected = NotifService.isConnected();
 
         if (granted && ready) {
-            buildPage(root, on);
+            buildPage(root, on, connected);
         } else {
-            buildContents(root, granted, ready, on);
+            buildContents(root, granted, ready, on, connected);
         }
     }
 
-    /**
-     * The page. Ready and running are the same page in two tenses: identical structure, identical
-     * evidence, and the one control relabelled with what pressing it will do.
-     *
-     * <p>There is no headline. The state line already says whether the app is ready, running or in
-     * trouble, and the instrument below it is the page's statement; a sentence repeating either
-     * would only be another thing to read before the figure.
-     */
-    private void buildPage(LinearLayout root, boolean running) {
-        boolean failed = t.failed;
-
-        root.addView(stateLine(running ? (failed ? c.bad : c.good) : c.muted,
-                running ? (failed ? "Status \u00B7 needs attention" : "Status \u00B7 live")
-                        : "Status \u00B7 ready"),
+    /** The page. Every state has the same shape; only the status sentence and the button change. */
+    private void buildPage(LinearLayout root, boolean on, boolean connected) {
+        root.addView(stateLine(statusColour(on, true, connected), statusSentence(on, true, connected)),
                 margins(26, 20, 20, 0));
 
-        root.addView(gauge(running), margins(16, 20, 20, 0));
-
-        // The primary control sits directly under the dial. It is the one thing the user opens this
-        // screen to do, so it must not require scrolling past counters, a trace and a sender table.
-        if (running) {
-            addButton(root, secondaryButton("Pause filtering", new View.OnClickListener() {
+        // One-tap repair, when there is something to repair. The on/off control below it is
+        // never conditional: a page that cannot be switched off is the worst possible state.
+        // The repair only appears once the silence is long enough to be evidence (see stalled()),
+        // so a cold start does not greet the user with an alarm.
+        if (stalled(on, true, connected)) {
+            addButton(root, secondaryButton("Open notification access", new View.OnClickListener() {
                 @Override
-                public void onClick(View v) {
-                    prefs.setEnabled(false);
-                    render();
-                }
-            }));
-        } else {
-            addButton(root, primaryButton("Turn on filtering", new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    prefs.setEnabled(true);
-                    render();
-                }
+                public void onClick(View v) { openNotificationSettings(); }
             }));
         }
 
+        root.addView(gauge(on, connected), margins(16, 20, 20, 0));
+
+        addButton(root, onOffButton(on));
+
         root.addView(rule(), margins(28, 20, 20, 0));
         root.addView(counters());
+        root.addView(meta("\u2014 Removed notifications cannot be brought back. The Removed list "
+                + "is the record."), margins(4, 20, 24, 0));
         root.addView(rule());
 
         String last = lastLine();
         if (last != null) root.addView(meta(last), margins(12, 20, 24, 0));
 
         root.addView(rule(), margins(28, 20, 20, 0));
-        root.addView(kicker("Activity \u00B7 last twelve hours"), margins(26, 20, 20, 10));
+        root.addView(kicker("Removed per hour, last 12 hours"), margins(26, 20, 20, 10));
         root.addView(trace());
 
         root.addView(rule(), margins(30, 20, 20, 0));
-        root.addView(kicker("Removed by sender"), margins(26, 20, 20, 10));
+        root.addView(kicker("Which apps lost the most"), margins(26, 20, 20, 10));
         senders(root);
 
         promise(root);
@@ -216,29 +275,22 @@ public class HomeActivity extends Screen {
     }
 
     /**
-     * Not ready. The list contains only what is missing, so finishing an item makes it vanish and
-     * leaves the next one; there is no counter to fall behind and no order to lose.
-     *
-     * <p>The rows say what is missing and the button says what to do about it, so there is no
-     * headline and no paragraph above them. The one line that survives is the only fact the rows
-     * cannot carry: notification access is granted in Android's own settings screen, which is
-     * outside this app — knowing that before the screen changes is the difference between a
-     * confusing detour and an expected one.
+     * Not ready, or access revoked. The list contains only what is missing, so finishing an item
+     * makes it vanish and leaves the next one.
      */
-    private void buildContents(LinearLayout root, boolean granted, boolean ready, boolean on) {
-
-        root.addView(stateLine(on ? c.bad : c.muted,
-                on ? "Status \u00B7 cannot run" : "Status \u00B7 not set up"),
-                margins(26, 20, 20, 0));
+    private void buildContents(LinearLayout root, boolean granted, boolean ready, boolean on,
+                               boolean connected) {
+        root.addView(stateLine(statusColour(on, ready, connected),
+                statusSentence(on, ready, connected)), margins(26, 20, 20, 0));
 
         if (!granted) {
             TextView why = text("Android grants notification access in its own settings screen.",
-                    12.5f, c.muted, false);
+                    13, c.muted, false);
             why.setLineSpacing(dp(4), 1f);
             root.addView(why, margins(12, 20, 24, 0));
         }
 
-        root.addView(kicker("To finish setup"), margins(28, 20, 20, 6));
+        root.addView(kicker("To finish setup", c.muted), margins(28, 20, 20, 6));
 
         int index = 1;
         if (!granted) {
@@ -272,38 +324,151 @@ public class HomeActivity extends Screen {
                     }));
         }
 
+        // The control exists in every state, including the one where filtering is on but cannot
+        // run: otherwise the screen that says "cannot run" is also the screen that cannot stop it.
+        // While a setup action is the page's one filled button, the on/off control is the
+        // secondary one — the page still gets exactly one call to action.
+        boolean setupAction = !granted || !ready;
+        if (on) {
+            addButton(root, secondaryButton("Turn off filtering", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.setEnabled(false);
+                    render();
+                }
+            }));
+        } else if (setupAction) {
+            addButton(root, secondaryButton("Turn on filtering", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.setEnabled(true);
+                    render();
+                }
+            }));
+        } else {
+            addButton(root, onOffButton(false));
+        }
+
+        root.addView(settingsRow("Removed notifications", removedLabel(), true,
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) { start(RemovedActivity.class); }
+                }));
         root.addView(settingsRow("Settings", null, true, new View.OnClickListener() {
             @Override
             public void onClick(View v) { start(SettingsActivity.class); }
         }));
     }
 
+    /** The one on/off control, in every state. */
+    private TextView onOffButton(boolean on) {
+        if (on) {
+            return secondaryButton("Turn off filtering", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.setEnabled(false);
+                    render();
+                }
+            });
+        }
+        return primaryButton("Turn on filtering", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                prefs.setEnabled(true);
+                render();
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ status
+
+    private String statusSentence(boolean on, boolean ready, boolean connected) {
+        if (!on) return "Filtering is off";
+        if (!ready) return "Filtering is on, but setup is unfinished";
+        if (stalled(on, ready, connected)) return "Filtering is on, but Android has stopped it";
+        long last = lastHeard();
+        if (last <= 0L) return "Filtering is on \u00B7 waiting for the first notification";
+        String ago = DateUtils.getRelativeTimeSpanString(last, now,
+                DateUtils.MINUTE_IN_MILLIS).toString();
+        return "Filtering is on \u00B7 last checked " + ago;
+    }
+
+    /**
+     * True only when there is real evidence that filtering has stopped: the listener is not bound
+     * in this process <em>and</em> nothing has arrived for long enough that the silence is not just
+     * a quiet phone.
+     *
+     * <p>A cold start and the moment after returning from Android's access screen both begin with
+     * no binding; the system binds the service when it next needs it. Calling that "Android has
+     * stopped it" would be a frightening false alarm on a routine launch, which is the same class
+     * of lie as the old "Status · live".
+     */
+    private boolean stalled(boolean on, boolean ready, boolean connected) {
+        if (!on || !ready || connected) return false;
+        long last = lastHeard();
+        return last > 0L && now - last > STALL_MS;
+    }
+
+    /** Last notification received, falling back to the last verdict for upgraded installs. */
+    private long lastHeard() {
+        long last = prefs.lastNotificationAt();
+        return last > 0L ? last : prefs.lastAt();
+    }
+
+    private int statusColour(boolean on, boolean ready, boolean connected) {
+        if (!on) return c.muted;
+        if (!ready || stalled(on, ready, connected)) return c.bad;
+        return c.good;
+    }
+
+    /**
+     * The one-line status. The dot is decoration; the sentence is the announcement. It is set in
+     * sentence case at reading size, not as tracked small caps, because it is a statement and not
+     * a label.
+     */
+    private LinearLayout stateLine(int colour, String sentence) {
+        LinearLayout line = new LinearLayout(this);
+        line.setOrientation(LinearLayout.HORIZONTAL);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+
+        View dot = new View(this);
+        GradientDrawable oval = new GradientDrawable();
+        oval.setShape(GradientDrawable.OVAL);
+        oval.setColor(colour);
+        dot.setBackground(oval);
+        decorative(dot);
+        line.addView(dot, new LinearLayout.LayoutParams(dp(7), dp(7)));
+
+        TextView t = text(sentence, 13.5f, colour, true);
+        t.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.setMarginStart(dp(10));
+        line.addView(t, p);
+        return line;
+    }
+
     // ------------------------------------------------------------------ the instrument
 
     /**
-     * The gauge, centred and set at roughly two thirds of the page width, with its reading inside
-     * the face: this hour's removals, the unit, and the instrument's own word for whether it is
-     * running. The load sentence sits beneath it as a caption rather than beside it as a rival, so
-     * the dial is the one thing the eye lands on and the words only qualify it.
-     *
-     * <p>The ring is lit from the real ratio whether or not filtering is running — a paused
-     * instrument still shows how much of the hour's peak was reached — but the pointer turns only
-     * while filtering does, so a still pointer is a true statement that nothing is being judged.
+     * The gauge, with its reading inside the face: removals in the last hour and whether filtering
+     * is running. The frame — not the drawing — is the tap target, so the whole instrument opens the
+     * record of what it counted.
      */
-    private View gauge(boolean running) {
+    private View gauge(final boolean on, boolean connected) {
         LinearLayout block = new LinearLayout(this);
         block.setOrientation(LinearLayout.VERTICAL);
         block.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        int size = Math.min(dp(246),
-                getResources().getDisplayMetrics().widthPixels - dp(48));
+        // A fixed frame has to give way to a large system font scale, or the reading is clipped.
+        float fontScale = getResources().getConfiguration().fontScale;
+        int base = fontScale > 1.3f ? 190 : 246;
+        int size = Math.min(dp(base), getResources().getDisplayMetrics().widthPixels - dp(48));
 
         FrameLayout frame = new FrameLayout(this);
         DialView dial = new DialView(this);
         dial.palette(c);
-        dial.set(running ? DialView.RUNNING : DialView.REST, t.load());
-        dial.setContentDescription((running ? "Filtering on, pointer turning. " : "Filtering off, pointer still. ")
-                + loadSentence());
+        dial.set(on && connected ? DialView.RUNNING : DialView.REST, t.load());
         frame.addView(dial, new FrameLayout.LayoutParams(size, size));
 
         LinearLayout reading = new LinearLayout(this);
@@ -312,22 +477,41 @@ public class HomeActivity extends Screen {
 
         TextView hour = figure(String.valueOf(thisHour()), 44, c.ink);
         hour.setGravity(Gravity.CENTER);
+        hour.setSingleLine(true);
+        hour.setMaxLines(1);
+        hour.setAutoSizeTextTypeUniformWithConfiguration(20, 44, 2,
+                TypedValue.COMPLEX_UNIT_SP);
         reading.addView(hour);
 
-        TextView unit = micro("this hour", c.faint);
+        TextView unit = text("removed in the last hour", 12, c.faint, false);
         unit.setGravity(Gravity.CENTER);
-        reading.addView(unit, margins(2, 0, 0, 0));
+        unit.setMaxLines(2);
+        reading.addView(unit, margins(4, 0, 0, 0));
 
-        TextView word = kicker(running ? "On" : "Off", running ? c.accent : c.faint);
-        word.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 11);
+        // "On" is the switch, not the connection: the sentence above the dial explains a missing
+        // binding, and a dial that said "Off" while filtering was enabled would contradict it.
+        TextView word = kicker(on ? "On" : "Off", on ? c.accent : c.muted);
+        word.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         word.setLetterSpacing(0.16f);
         word.setGravity(Gravity.CENTER);
         reading.addView(word, margins(7, 0, 0, 0));
 
+        reading.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         frame.addView(reading, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER));
         block.addView(frame, new LinearLayout.LayoutParams(size, size));
+
+        String state = !on ? "Filtering is off."
+                : stalled(on, true, connected) ? "Filtering is on, but Android has stopped it."
+                : "Filtering is on.";
+        frame.setContentDescription(state + " " + thisHour()
+                + " notifications removed in the last hour.");
+        makeButton(frame, "Opens the removed list");
+        frame.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { start(RemovedActivity.class); }
+        });
 
         TextView sentence = display(loadSentence(), 14, c.muted);
         sentence.setGravity(Gravity.CENTER);
@@ -345,11 +529,15 @@ public class HomeActivity extends Screen {
     private String loadSentence() {
         int thisHour = t.buckets[Telemetry.BUCKETS - 1];
         int peak = peakOfWindow();
-        if (t.removed == 0) return "Nothing removed yet.";
-        if (peak == 0) return "Nothing in the last twelve hours.";
-        if (thisHour == 0) return "None in this hour, against a peak of " + peak + ".";
-        if (thisHour == 1) return "1 in this hour, against a peak of " + peak + ".";
-        return thisHour + " in this hour, against a peak of " + peak + ".";
+        if (allTimeRemoved() == 0) return "Nothing removed yet.";
+        if (peak == 0) return "Nothing removed in the last 12 hours.";
+        if (thisHour == 0) {
+            return "None removed in the last hour. Busiest hour in 12: " + peak + ".";
+        }
+        if (thisHour == 1) {
+            return "1 removed in the last hour. Busiest hour in 12: " + peak + ".";
+        }
+        return thisHour + " removed in the last hour. Busiest hour in 12: " + peak + ".";
     }
 
     /** The true busiest bucket. Telemetry floors its scale at one; a printed reading must not be. */
@@ -360,77 +548,133 @@ public class HomeActivity extends Screen {
     }
 
     /**
-     * Three counts, one rule. The removed total leads, but at 48sp rather than a display size: the
-     * dial is the page's dominant figure now, and two large numbers on one screen would leave the
-     * reader choosing between them. The other two counts are qualifiers and are set small beside
-     * it. Every one of them is a count of something the app actually wrote down.
+     * The counters, in two rows so a large font scale does not crush three columns. The all-time
+     * figure is {@link Prefs#removedTotal()}, not the length of the capped log; the Removed row
+     * says how much of the record is actually there.
      */
     private View counters() {
         LinearLayout block = new LinearLayout(this);
-        block.setOrientation(LinearLayout.HORIZONTAL);
-        block.setGravity(Gravity.BOTTOM);
-        block.setPadding(dp(20), dp(14), dp(20), dp(14));
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPaddingRelative(dp(20), dp(14), dp(20), dp(14));
 
-        block.addView(counter(t.removed, true, "Notifications", "removed"),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.25f));
-        block.addView(counter(t.protectedApps, false, "Protected", "never read"),
+        block.addView(counter(allTimeRemoved(), true, "Removed", "removed", true),
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout second = new LinearLayout(this);
+        second.setOrientation(LinearLayout.HORIZONTAL);
+        second.setGravity(Gravity.TOP);
+        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        left.setMarginEnd(dp(16));
+        second.addView(counter(t.protectedApps, false, "Apps protected", "protected", false), left);
+        second.addView(counter(t.watched, false, "Apps seen", "watched", false),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        block.addView(counter(t.watched, false, "Watched", "apps seen"),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        block.addView(second, margins(14, 0, 0, 0));
         return block;
     }
 
-    private View counter(int value, boolean lead, String label, String sub) {
+    private View counter(final int value, boolean lead, String label, String key,
+                         boolean opensRemoved) {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
 
-        int size = value >= 10000 ? 26 : (value >= 1000 ? 34 : (lead ? 48 : 26));
-        final TextView num = figure("0", size, c.ink);
-        col.addView(num);
-        col.addView(kicker(label), margins(7, 2, 0, 0));
-        col.addView(kicker(sub, c.faint), margins(3, 2, 0, 0));
-        countUp(num, value);
+        final TextView num = figure("0", lead ? 48 : 26, c.ink);
+        num.setSingleLine(true);
+        num.setMaxLines(1);
+        num.setAutoSizeTextTypeUniformWithConfiguration(16, lead ? 48 : 26, 2,
+                TypedValue.COMPLEX_UNIT_SP);
+        col.addView(num, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView lab = kicker(label);
+        lab.setMaxLines(2);
+        lab.setEllipsize(TextUtils.TruncateAt.END);
+        col.addView(lab, margins(7, 2, 0, 0));
+        if (lead) {
+            TextView allTime = kicker("all time", c.faint);
+            allTime.setMaxLines(1);
+            allTime.setEllipsize(TextUtils.TruncateAt.END);
+            col.addView(allTime, margins(2, 2, 0, 0));
+            allTime.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        String spoken = spokenCounter(value, label);
+        col.setContentDescription(spoken);
+        num.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        lab.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+
+        if (opensRemoved) {
+            col.setBackground(ripple());
+            col.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { start(RemovedActivity.class); }
+            });
+            makeButton(col, "Opens the removed list");
+        }
+        countUp(num, key, value);
         return col;
     }
 
-    /** The drawn twelve-hour trace, with its axis in small caps. */
+    private String spokenCounter(int value, String label) {
+        if ("Removed".equals(label)) {
+            return value + (value == 1 ? " notification removed" : " notifications removed")
+                    + ", all time";
+        }
+        return value + " " + label.toLowerCase(Locale.ROOT);
+    }
+
+    /** The drawn twelve-hour trace, with its axis in words. */
     private View trace() {
         LinearLayout holder = new LinearLayout(this);
         holder.setOrientation(LinearLayout.VERTICAL);
-        holder.setPadding(dp(20), 0, dp(20), 0);
+        holder.setPaddingRelative(dp(20), 0, dp(20), 0);
 
         TraceView chart = new TraceView(this);
         chart.palette(c);
         chart.setData(t.buckets, peakOfWindow());
+        chart.setContentDescription("Removal chart. " + t.removedInSpan
+                + " removed in the last 12 hours.");
         holder.addView(chart, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
-        chart.playGrow();
+        if (!traceGrown) {
+            traceGrown = true;
+            chart.playGrow();
+        }
 
         LinearLayout axis = new LinearLayout(this);
         axis.setOrientation(LinearLayout.HORIZONTAL);
-        axis.setPadding(0, dp(7), 0, 0);
-        axis.addView(kicker("12h", c.faint),
+        axis.setPaddingRelative(0, dp(7), 0, 0);
+        axis.addView(axisLabel("12 hours ago", Gravity.START),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView mid = kicker("6h", c.faint);
-        mid.setGravity(Gravity.CENTER_HORIZONTAL);
-        axis.addView(mid, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView end = kicker("Now", c.faint);
-        end.setGravity(Gravity.END);
-        axis.addView(end, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        axis.addView(axisLabel("6 hours ago", Gravity.CENTER_HORIZONTAL),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        axis.addView(axisLabel("now", Gravity.END),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         holder.addView(axis);
         return holder;
     }
 
+    private TextView axisLabel(String value, int gravity) {
+        TextView t = kicker(value, c.faint);
+        t.setLetterSpacing(0.06f);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        t.setGravity(gravity);
+        return t;
+    }
+
     /**
      * The ranking. Rank and tally are the app's only monospaced numerals: they stack in a column
-     * and a column that does not line up is not a ranking. The bar is proportional to the leader,
-     * so the table reads as a comparison and not as five separate numbers.
+     * and a column that does not line up is not a ranking. Each row opens the same record.
      */
     private void senders(LinearLayout root) {
         List<Telemetry.Sender> ranked = t.top;
         if (ranked == null || ranked.isEmpty()) {
-            root.addView(meta("\u2014 No sender has lost a notification yet."),
-                    margins(0, 20, 24, 6));
+            String line = allTimeRemoved() == 0
+                    ? "\u2014 No app has lost a notification yet."
+                    : "\u2014 The record has been cleared, so there is nothing to rank.";
+            root.addView(meta(line), margins(0, 20, 24, 6));
             return;
         }
         int leader = ranked.get(0).removed;
@@ -445,18 +689,22 @@ public class HomeActivity extends Screen {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(20), dp(8), dp(20), dp(8));
+        row.setMinimumHeight(dp(52));
+        row.setPaddingRelative(dp(20), dp(8), dp(20), dp(8));
 
-        TextView index = mono(String.format(Locale.ROOT, "%02d", rank), 10, c.faint, false);
+        float fontScale = getResources().getConfiguration().fontScale;
+        int figureColumn = dp(32 * Math.max(1f, Math.min(fontScale, 1.8f)));
+
+        TextView index = mono(String.format(Locale.ROOT, "%02d", rank), 12, c.faint, false);
         index.setLetterSpacing(0.14f);
-        row.addView(index, new LinearLayout.LayoutParams(dp(30),
+        row.addView(index, new LinearLayout.LayoutParams(figureColumn,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout middle = new LinearLayout(this);
         middle.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        mp.rightMargin = dp(16);
+        mp.setMarginEnd(dp(16));
         row.addView(middle, mp);
 
         TextView name = text(app, 13.5f, c.ink, false);
@@ -472,48 +720,37 @@ public class HomeActivity extends Screen {
         mlp.topMargin = dp(6);
         middle.addView(meter, mlp);
 
-        TextView tally = mono(String.valueOf(count), 11.5f, c.ink, true);
+        TextView tally = mono(String.valueOf(count), 12, c.ink, true);
         tally.setGravity(Gravity.END);
-        row.addView(tally, new LinearLayout.LayoutParams(dp(30),
+        row.addView(tally, new LinearLayout.LayoutParams(figureColumn,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        row.setContentDescription("Number " + rank + ", " + app + ", " + count
+                + " removed. Opens the removed list.");
+        index.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        tally.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.setBackground(ripple());
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { start(RemovedActivity.class); }
+        });
+        makeButton(row, "Opens the removed list");
         return row;
     }
 
     // ------------------------------------------------------------------ pieces
 
-    /** A state dot and a line of small caps: the only status colour on the page. */
-    private LinearLayout stateLine(int colour, String label) {
-        LinearLayout line = new LinearLayout(this);
-        line.setOrientation(LinearLayout.HORIZONTAL);
-        line.setGravity(Gravity.CENTER_VERTICAL);
-
-        View dot = new View(this);
-        GradientDrawable oval = new GradientDrawable();
-        oval.setShape(GradientDrawable.OVAL);
-        oval.setColor(colour);
-        dot.setBackground(oval);
-        line.addView(dot, new LinearLayout.LayoutParams(dp(6), dp(6)));
-
-        TextView t = kicker(label, colour == c.muted ? c.muted : colour);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        p.leftMargin = dp(10);
-        line.addView(t, p);
-        return line;
-    }
-
-    /** The three destinations, numbered like a contents page. */
+    /** The destinations, numbered like a contents page but without a heading to decode. */
     private void contents(LinearLayout root) {
-        int removed = t.removed;
         root.addView(rule(), margins(30, 20, 20, 0));
-        root.addView(kicker("Contents"), margins(20, 20, 20, 2));
-        root.addView(indexedRow("01", "Removed notifications",
-                removed == 0 ? "None" : String.valueOf(removed), new View.OnClickListener() {
+        root.addView(indexedRow("01", "Removed notifications", removedLabel(),
+                new View.OnClickListener() {
                     @Override
                     public void onClick(View v) { start(RemovedActivity.class); }
                 }));
-        root.addView(indexedRow("02", "Where answers come from",
-                prefs.usesProvider() ? "Your provider" : "On this device",
+        root.addView(indexedRow("02", "How notifications are judged",
+                prefs.usesProvider() ? "Your provider" : "On this phone",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -542,9 +779,9 @@ public class HomeActivity extends Screen {
                     + " skipped while busy, and kept."), margins(18, 20, 24, 0));
         }
         root.addView(rule(), margins(14, 20, 20, 0));
-        root.addView(kicker("The rule", c.faint), margins(20, 20, 20, 4));
-        TextView close = italic("\u201CWhen the classifier is unsure, fails, or does not recognise "
-                + "a notification, it is kept.\u201D", 15, c.muted);
+        root.addView(kicker("What it never removes", c.muted), margins(20, 20, 20, 4));
+        TextView close = italic("\u201CIf the app is unsure, or something goes wrong, it keeps the "
+                + "notification.\u201D", 15, c.muted);
         close.setLineSpacing(dp(5), 1f);
         root.addView(close, margins(12, 20, 28, 0));
     }
@@ -566,15 +803,9 @@ public class HomeActivity extends Screen {
         r.addView(chevron());
         r.setBackground(ripple());
         r.setOnClickListener(listener);
+        r.setContentDescription(label + ", " + value);
+        makeButton(r, "Opens " + label);
         return r;
-    }
-
-    /** Metadata in the small caps that carry tracking, for lines that sit inside a figure block. */
-    private TextView micro(String value, int colour) {
-        TextView t = kicker(value, colour);
-        t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 9.5f);
-        t.setLetterSpacing(0.14f);
-        return t;
     }
 
     private TextView meta(String value) {
@@ -584,11 +815,21 @@ public class HomeActivity extends Screen {
     }
 
     /**
-     * "Last check 4 minutes ago · junk." The verdict is the app's own record, lower-cased.
-     *
-     * <p>Null when nothing has been checked: a line saying so beside a visibly flat trace, three
-     * zero counters and an idle dial is the definition of a note that explains the page back to
-     * itself.
+     * The lifetime figure. An install upgraded from a build without the counter has a non-empty
+     * log and a zero counter, so the log length is the honest floor rather than "0 removed".
+     */
+    private int allTimeRemoved() {
+        return Math.max(prefs.removedTotal(), t == null ? 0 : t.removed);
+    }
+
+    private String removedLabel() {
+        int total = allTimeRemoved();
+        return total == 0 ? "None" : String.valueOf(total);
+    }
+
+    /**
+     * "Last checked 4 minutes ago · the app removed an advert." Model verdicts and guard names are
+     * internals; the sentence the user gets is the outcome.
      */
     private String lastLine() {
         if (t.lastAt == 0L) return null;
@@ -596,12 +837,28 @@ public class HomeActivity extends Screen {
                 DateUtils.MINUTE_IN_MILLIS).toString();
         if (t.failed) {
             String error = prefs.lastError();
-            if (error != null && error.length() > 90) error = error.substring(0, 89) + "\u2026";
-            return "Last check " + ago + " \u00B7 failed: " + error;
+            if ("On-device: unsure".equalsIgnoreCase(error)) {
+                return "Last check " + ago + " \u00B7 unsure, so it kept the notification.";
+            }
+            return "Last check " + ago + " \u00B7 the check failed, so it kept the notification.";
         }
         String verdict = t.lastVerdict;
         if (verdict == null || verdict.isEmpty()) return "Last check " + ago + ".";
-        return "Last check " + ago + " \u00B7 " + verdict.toLowerCase(Locale.ROOT) + ".";
+        return "Last check " + ago + " \u00B7 " + plainOutcome(verdict) + ".";
+    }
+
+    private String plainOutcome(String verdict) {
+        String v = verdict == null ? "" : verdict.trim();
+        if ("JUNK".equalsIgnoreCase(v)) return "the app removed an advert";
+        if ("KEEP".equalsIgnoreCase(v)) return "it was kept";
+        // The on-device uncertainty band is a success, not a failure, and a different outcome
+        // from a notification that changed while it was being checked.
+        if ("KEPT (unsure)".equalsIgnoreCase(v)) return "it was kept \u2014 it was unsure";
+        if (v.toUpperCase(Locale.ROOT).startsWith("KEPT (CHANGED")) {
+            return "it was kept \u2014 it changed while being checked";
+        }
+        if (v.toUpperCase(Locale.ROOT).startsWith("KEPT")) return "it was kept";
+        return "it was kept";
     }
 
     private void openNotificationSettings() {
