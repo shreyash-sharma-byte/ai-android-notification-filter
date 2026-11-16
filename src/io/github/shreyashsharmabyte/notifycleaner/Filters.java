@@ -44,6 +44,21 @@ public final class Filters {
         return false;
     }
 
+    /**
+     * How many of the apps that have actually posted a notification are protected. This is what the
+     * dashboard means by "apps protected": counting allow-list entries instead over-reports, because
+     * one fragment such as "hdfc" covers several packages, and under-reports when a package is
+     * covered by a shorter entry and so was never added to the list.
+     */
+    public static int protectedSeen(String allowList, java.util.List<String[]> seen) {
+        if (seen == null || seen.isEmpty()) return protectedCount(allowList);
+        int n = 0;
+        for (String[] row : seen) {
+            if (isProtected(allowList, row[0])) n++;
+        }
+        return n;
+    }
+
     /** Number of entries that will actually match something. The UI shows this back to the user. */
     public static int protectedCount(String allowList) {
         return allowList == null ? 0 : entries(allowList).length;
@@ -51,16 +66,15 @@ public final class Filters {
 
     private static String[] entries(String allowList) {
         String[] parts = allowList.split("[,\\s;]+");
-        int kept = 0;
-        String[] out = new String[parts.length];
+        // Deduplicated: "hdfc, hdfc, uber" is two protections, and the UI shows this count back to
+        // the user as a number of protected apps. Counting a repeated entry twice would overstate it.
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<String>();
         for (String part : parts) {
             String entry = part.trim().toLowerCase(Locale.ROOT);
             if (entry.length() < MIN_ENTRY_LENGTH) continue;
-            out[kept++] = entry;
+            seen.add(entry);
         }
-        String[] trimmed = new String[kept];
-        System.arraycopy(out, 0, trimmed, 0, kept);
-        return trimmed;
+        return seen.toArray(new String[0]);
     }
 
     /**

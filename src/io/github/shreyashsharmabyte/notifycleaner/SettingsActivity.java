@@ -64,7 +64,7 @@ public class SettingsActivity extends Screen {
             accessValue.setTextColor(granted ? c.muted : c.accent);
         }
         if (protectedValue != null) {
-            int count = Filters.protectedCount(prefs.allowList());
+            int count = Filters.protectedSeen(prefs.allowList(), prefs.seenApps());
             setRowValue(protectedValue, "Protected apps", count == 0 ? "None"
                     : count + (count == 1 ? " app" : " apps"));
         }
