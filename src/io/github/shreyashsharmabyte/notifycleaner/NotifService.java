@@ -283,10 +283,12 @@ public class NotifService extends NotificationListenerService {
                 cache.put(cacheKey, Boolean.TRUE);
                 dismiss(sbnKey);
                 settings.appendLog(LogCodec.encodeEntry(now, label(pkg), title, text, pkg));
+                capture(settings, now, pkg, title, text, "JUNK");
                 settings.recordSuccess("JUNK", now);
             } else if (verdict == Decision.Verdict.KEEP) {
                 cache.put(cacheKey, Boolean.FALSE);
                 settings.recordSuccess("KEEP", now);
+                capture(settings, now, pkg, title, text, "KEEP");
             } else {
                 // UNCLEAR is a normal outcome, not a fault: the notification is kept and the
                 // home screen must say so, not "needs attention". An on-device UNCLEAR is the
@@ -385,5 +387,12 @@ public class NotifService extends NotificationListenerService {
     public void onDestroy() {
         pool.shutdownNow();
         super.onDestroy();
+    }
+
+    /** Local, redacted capture for later retraining. Never transmitted. */
+    private void capture(Prefs s, long now, String pkg, String title, String text, String v) {
+        if (!s.capturesTraining()) return;
+        String e = TrainingLog.encode(now, label(pkg), title, text, pkg, v, 0f);
+        s.setTrainingLog(TrainingLog.append(s.trainingLog(), e));
     }
 }

@@ -35,6 +35,7 @@ public final class LogicTest {
         urls();
         strictness();
         allowList();
+        trainingLog();
         localModels();
         categories();
         senders();
@@ -409,6 +410,22 @@ public final class LogicTest {
     }
 
     // ------------------------------------------------------------------ protected list
+
+    private static void trainingLog() {
+        String t = TrainingLog.redact("482913 is your OTP for Rs 1,299");
+        check("otp digits are redacted", !t.contains("482913"));
+        check("redaction marks the gap", t.contains("[NUM]"));
+        check("email is redacted", TrainingLog.redact("mail user@example.com").contains("[EMAIL]"));
+        check("amount is redacted", TrainingLog.redact("paid Rs 1,299 today").contains("[AMOUNT]"));
+        check("phone is redacted", TrainingLog.redact("call 9876543210").contains("[PHONE]"));
+        check("card is redacted", TrainingLog.redact("4111 1111 1111 1111").contains("[CARD]"));
+        String e = TrainingLog.encode(1L, "HDFC Bank", "OTP 482913", "Do not share", "com.hdfcbank", "KEEP", 0f);
+        check("encode has 7 fields", 7 == e.split("\\t").length);
+        check("encode is redacted", !e.contains("482913"));
+        String log = TrainingLog.append("", e);
+        for (int i = 0; i < 700; i++) log = TrainingLog.append(log, e);
+        check("capture is capped", 600 == log.split("\n").length);
+    }
 
     private static void allowList() {
         String base = "com.whatsapp,paytm";

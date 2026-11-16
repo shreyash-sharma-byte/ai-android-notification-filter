@@ -90,6 +90,13 @@ public final class Prefs {
 
     public void setEnabled(boolean on) { p.edit().putBoolean(KEY_ENABLED, on).apply(); }
 
+    /** Local training capture: redacted before storage, never leaves the device unless exported. */
+    public boolean capturesTraining() { return p.getBoolean("train_capture", true); }
+
+    public String trainingLog() { return p.getString("train_log", ""); }
+
+    public void setTrainingLog(String v) { p.edit().putString("train_log", v).apply(); }
+
     /** True when every field a cloud provider needs is present and the endpoint is acceptable. */
     public boolean configured() {
         Providers.Preset preset = provider();
