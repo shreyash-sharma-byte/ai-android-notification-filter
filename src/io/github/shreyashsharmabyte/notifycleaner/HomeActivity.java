@@ -80,8 +80,9 @@ public class HomeActivity extends Screen {
 
     private void render() {
         now = System.currentTimeMillis();
-        t = Telemetry.of(prefs.log(), Filters.protectedCount(prefs.allowList()),
-                prefs.seenApps().size(), prefs.dropped(),
+        java.util.List<String[]> seen = prefs.seenApps();
+        t = Telemetry.of(prefs.log(), Filters.protectedSeen(prefs.allowList(), seen),
+                seen.size(), prefs.dropped(),
                 prefs.lastVerdict(), prefs.lastAt(), prefs.lastError(), now);
 
         LinearLayout root = vertical();

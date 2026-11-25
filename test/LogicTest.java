@@ -413,6 +413,23 @@ public final class LogicTest {
     private static void allowList() {
         String base = "com.whatsapp,paytm";
 
+        // The home screen shows protectedCount() as a number of protected apps, so a repeated or
+        // whitespace-padded entry must not be counted twice.
+        eq("duplicate entries count once", 2, Filters.protectedCount("hdfc, hdfc, uber"));
+        eq("junk separators are not entries", 3, Filters.protectedCount("hdfc,,  ,uber;zomato"));
+        eq("empty list counts zero", 0, Filters.protectedCount(""));
+        eq("null list counts zero", 0, Filters.protectedCount(null));
+
+        // "Apps protected" on the dashboard must count apps, not allow-list entries: one fragment
+        // ("hdfc") covers com.hdfcbank.mobile, and uber is not protected at all.
+        java.util.List<String[]> seen = new java.util.ArrayList<String[]>();
+        seen.add(new String[] {"com.whatsapp", "WhatsApp"});
+        seen.add(new String[] {"com.hdfcbank.mobile", "HDFC Bank"});
+        seen.add(new String[] {"com.ubercab", "Uber"});
+        eq("apps protected counts matched apps", 2, Filters.protectedSeen("com.whatsapp,hdfc", seen));
+        eq("apps protected falls back to rules when nothing seen", 1,
+                Filters.protectedSeen("hdfc", new java.util.ArrayList<String[]>()));
+
         check("add appends", AllowList.add(base, "com.amazon").contains("com.amazon"));
         eq("add duplicate is a no-op", base, AllowList.add(base, "com.whatsapp"));
         check("add to empty", AllowList.add("", "com.amazon").equals("com.amazon"));
