@@ -28,7 +28,7 @@ public class PromptActivity extends Screen {
         super.onCreate(state);
 
         LinearLayout root = vertical();
-        header(root, "Advanced prompt", "\u2039 Back", "Reset", new View.OnClickListener() {
+        header(root, "Advanced prompt", "Back", "Reset", new View.OnClickListener() {
             @Override
             public void onClick(View v) { reset(); }
         });

@@ -9,9 +9,7 @@ import android.service.notification.StatusBarNotification;
 import android.util.Log;
 
 import java.io.InputStream;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -31,8 +29,9 @@ import java.util.concurrent.TimeUnit;
  * <p>Two engines, chosen by {@link Prefs#engine()}. The default is the on-device
  * {@link LocalClassifier}: an 18 KB linear model loaded once from the APK's assets, no network, no
  * key, no account. The other is the user's own cloud provider, reachable only after they opt in and
- * agree to a provider-specific disclosure. Both paths return the same three verdicts and share the
- * same fail-open handling below, so nothing about dismissal changes with the engine.
+ * agree to a provider-specific disclosure. The five guard rules run in {@link #inspect} before the
+ * engine split, and both paths return the same three verdicts and share the same fail-open handling,
+ * so nothing about dismissal changes with the engine.
  */
 public class NotifService extends NotificationListenerService {
 
@@ -41,14 +40,6 @@ public class NotifService extends NotificationListenerService {
     static final int WORKERS = 2;
     static final int QUEUE_DEPTH = 30;
     static final int CACHE_SIZE = 300;
-
-    /**
-     * Notification categories that are functional rather than informational. Matching any of these
-     * means the notification is a control surface and must never be dismissed by a language model.
-     */
-    private static final Set<String> FUNCTIONAL_CATEGORIES = new HashSet<String>(Arrays.asList(
-            "call", "alarm", "progress", "transport", "sys", "service", "status", "err",
-            "navigation", "reminder"));
 
     private final ThreadPoolExecutor pool = new ThreadPoolExecutor(
             WORKERS, WORKERS, 0L, TimeUnit.SECONDS,
@@ -85,6 +76,21 @@ public class NotifService extends NotificationListenerService {
 
     /** Why the load failed, for the in-app self-test. Null when it succeeded. */
     static volatile String localModelError;
+
+    // ---------------------------------------------------------------- liveness
+    // The UI used to decide whether filtering was working from a stored preference, so it could
+    // say "live" while Android had killed or unbound the listener. These statics are the truth
+    // for this process: they are only true while the system has actually bound the service, and
+    // they die with the process — which is precisely the failure the screen must be able to show.
+
+    private static volatile boolean bound;
+    private static volatile long boundAtMs;
+
+    /** True while the system has this listener bound to this process. */
+    public static boolean isConnected() { return bound; }
+
+    /** Epoch ms of the last successful bind, or 0. */
+    public static long boundAt() { return boundAtMs; }
 
     /**
      * @return the cached on-device model, or null when the asset could not be read. Null means the
@@ -130,10 +136,15 @@ public class NotifService extends NotificationListenerService {
         if (pkg == null || pkg.equals(getPackageName())) return;
 
         final Prefs settings = new Prefs(this);
-        // Learned before any filtering, so the protected-apps screen can offer real choices without
-        // the app needing permission to enumerate everything installed on the device.
-        if (!settings.hasSeenApp(pkg)) settings.recordSeenApp(pkg, label(pkg));
+        // Liveness is a timestamp, never content, and never before consent. It is what lets the
+        // home screen say "last checked 2 minutes ago" instead of guessing from a preference.
+        if (settings.consented()) settings.recordNotification(System.currentTimeMillis());
         if (!settings.enabled()) return;
+        // Learned only after consent AND activation. This used to run before both, so every app
+        // that posted was written to SharedPreferences while the user had not agreed and while
+        // filtering was paused — the opposite of what the first screen promises. The protected-
+        // apps screen can still offer real choices once filtering is on; until then, nothing.
+        if (!settings.hasSeenApp(pkg)) settings.recordSeenApp(pkg, label(pkg));
         // Offline is always ready. A provider is ready only when configured and agreed to; until
         // then the listener stops here, before any text is read for classification, so nothing is
         // sent and nothing is dismissed.
@@ -151,8 +162,9 @@ public class NotifService extends NotificationListenerService {
                 | Notification.FLAG_NO_CLEAR)) != 0) return;
         if (n.fullScreenIntent != null) return;
 
-        // Functional notifications: media players, calls, alarms, downloads, navigation.
-        if (n.category != null && FUNCTIONAL_CATEGORIES.contains(n.category)) return;
+        // Functional notifications: media players, calls, alarms, downloads, navigation, and
+        // Chat, mail and calendar. The list lives in Categories so it can be tested.
+        if (Categories.isFunctional(n.category)) return;
         if (n.extras.containsKey("android.mediaSession")) return;
         String template = n.extras.getString("android.template");
         if (template != null && template.contains("MediaStyle")) return;
@@ -175,6 +187,19 @@ public class NotifService extends NotificationListenerService {
         final String title = titleSeq == null ? "" : titleSeq.toString();
         final String text = textSeq == null ? "" : textSeq.toString();
         if (title.trim().isEmpty() && text.trim().isEmpty()) return;
+
+        // The five guard rules run HERE, before the engine split and before the cache. That is
+        // the whole point of moving them out of LocalClassifier: the provider path inherited no
+        // guards, so a provider answering JUNK for an OTP dismissed it. It also means guarded
+        // text (a bank debit, a sign-in alert) is never put in a request at all.
+        final String guard = Guards.check(label(pkg), title, text);
+        if (guard != null) {
+            // A guard hit is an ordinary, successful keep. The rule name stays available to the
+            // Settings self-test through LocalClassifier.Result.guard; the service keeps the
+            // existing "KEEP" verdict string so the home screen's wording does not change.
+            settings.recordSuccess("KEEP", System.currentTimeMillis());
+            return;
+        }
 
         final String model = offline ? "" : settings.model();
         final String base = offline ? "" : settings.base();
@@ -211,7 +236,8 @@ public class NotifService extends NotificationListenerService {
     /**
      * Runs one engine and applies its verdict. The decision handling below is shared, so the
      * on-device path and the provider path cannot drift apart on the one rule that matters: only a
-     * clear JUNK dismisses.
+     * clear JUNK dismisses. The five guard rules have already run in {@link #inspect}, so neither
+     * engine can be the reason a protected notification is dismissed.
      */
     private void judge(Prefs settings, String pkg, String title, String text, boolean offline,
                        String model, String base, String prompt, String providerId,
@@ -220,6 +246,7 @@ public class NotifService extends NotificationListenerService {
         try {
             final Decision.Verdict verdict;
             final String note;
+            final boolean problem;
 
             if (offline) {
                 LocalClassifier.Model onDevice = localModel(this);
@@ -228,15 +255,17 @@ public class NotifService extends NotificationListenerService {
                     settings.recordError("On-device model unavailable", now);
                     return;
                 }
-                LocalClassifier.Result result = LocalClassifier.classify(onDevice, label(pkg), title, text);
+                LocalClassifier.Result result = LocalClassifier.classify(onDevice, pkg, label(pkg), title, text);
                 verdict = result.verdict;
-                note = result.verdict == Decision.Verdict.UNCLEAR ? "On-device: unsure" : null;
+                note = null;
+                problem = false;
             } else {
                 Classifier classifier = new Classifier(
                         settings.apiKey(), model, base, prompt, providerId, breaker, limiter);
                 Classifier.Outcome outcome = classifier.classify(pkg, title, text, now);
                 verdict = outcome.verdict;
                 note = outcome.note;
+                problem = outcome.problem;
             }
 
             if (verdict == Decision.Verdict.JUNK) {
@@ -259,8 +288,17 @@ public class NotifService extends NotificationListenerService {
                 cache.put(cacheKey, Boolean.FALSE);
                 settings.recordSuccess("KEEP", now);
             } else {
-                // UNCLEAR is deliberately not cached: it is usually transient and must be retried.
-                settings.recordError(note, now);
+                // UNCLEAR is a normal outcome, not a fault: the notification is kept and the
+                // home screen must say so, not "needs attention". An on-device UNCLEAR is the
+                // uncertainty band or promotional language the model was not sure about.
+                //
+                // A provider failure also arrives as UNCLEAR (Classifier.Outcome.keep marks
+                // problem=true). That one stays an error so a broken key, timeout or rate limit
+                // is still visible — fail-open means keep, not hide.
+                //
+                // UNCLEAR is deliberately not cached: it deserves a fresh look next time.
+                if (problem) settings.recordError(note, now);
+                else settings.recordSuccess("KEPT (unsure)", now);
             }
         } catch (Throwable t) {
             settings.recordError("Unexpected: " + t, now);
@@ -330,7 +368,16 @@ public class NotifService extends NotificationListenerService {
      * not used here because it can throw under hidden-API enforcement and buys nothing.
      */
     @Override
+    public void onListenerConnected() {
+        bound = true;
+        boundAtMs = System.currentTimeMillis();
+        Log.i(TAG, "listener connected");
+    }
+
+    @Override
     public void onListenerDisconnected() {
+        // Do not force a rebind: the system does that. Only stop claiming to be running.
+        bound = false;
         Log.i(TAG, "listener disconnected; waiting for the system to rebind");
     }
 

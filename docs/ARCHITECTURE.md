@@ -10,6 +10,7 @@ to be certain a mistake cannot delete something important.
                  ┌──────────────────────── pure core (no android.*) ────────────────────────┐
                  │  Decision   Backoff   CircuitBreaker   RateLimiter   Providers            │
                  │  LogCodec   Filters   Urls   Strictness   AllowList   Prompt   LocalModels│
+                 │  Telemetry  LocalClassifier   Categories   Evidence   Guards   Senders     │
                  └────────────────────────────────────────────────────────────────────────────┘
                                                    ▲
         ┌──────────────────────────────────────────┴───────────────────────────────────┐
@@ -22,13 +23,39 @@ to be certain a mistake cannot delete something important.
         └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Twelve classes have no `android.*` import. That is not tidiness for its own sake: it is the only
-reason the interesting logic is testable at all on a machine with no emulator. `test.sh` compiles
-those twelve against a bare JDK and **fails the build if any of them ever imports Android** — the
-guard is what keeps the core honest over time.
+Eighteen classes have no `android.*` import. That is not tidiness for its own sake: it is the
+only reason the interesting logic is testable at all on a machine with no emulator. `test.sh`
+compiles those eighteen against a bare JDK and **fails the build if any of them ever imports
+Android** — the guard is what keeps the core honest over time.
 
-Everything Android-specific lives in the listener, the classifier, the preference file and the
-screens, and is deliberately dull.
+Everything Android-specific lives in the listener, the classifier transport, the preference file
+and the screens, and is deliberately dull.
+
+## The on-device judgement order
+
+The default engine answers in this order. The first three steps can only keep:
+
+1. **Functional gate.** Media, calls, alarms, progress, navigation, status — and now
+   `msg`, `email` and `event` — are never classified. `Categories` holds the list, and the
+   service checks it before it reads title or text.
+2. **Protected apps.** `Filters.isProtected` is a deliberately generous substring match.
+3. **Guard rules.** `Guards` checks OTPs, money movement, order/delivery state, security events
+   and account deadlines. The service calls it **before the engine split**, so both the
+   on-device model and the provider path get exactly the same five rules, and guarded text is
+   never put in a provider request at all.
+4. **The linear model** (`LocalClassifier`). A dot product: positive leans promotional,
+   negative leans ordinary.
+5. **The evidence gate** (`Evidence`). A positive score is not a dismissal. The text must also
+   contain actual promotional language; a model that learned `free` and `get` as promotional must
+   not be allowed to dismiss "Are you free tonight?" on that basis.
+6. **The uncertainty band.** A score inside ±`LocalClassifier.MARGIN` (0.25) is not a confident
+   answer. With promotional evidence present the result is UNCLEAR — kept and labelled "unsure".
+   Without evidence it is KEEP, because the gate has already settled the case.
+
+The provider path uses steps 1–3 and then the provider's own one-word answer, contained by
+`Decision`. It has no dot product, so the evidence gate does not apply to it: a provider's
+explicit JUNK is contained by parsing and the guard rules, not by a lexical score.
+
 
 ## Fail-open invariants
 
@@ -40,16 +67,25 @@ good it looks.
    all KEEP.
 2. Only an unambiguous JUNK dismisses. `Decision.parse` returns JUNK, KEEP or UNCLEAR, and UNCLEAR
    is treated as KEEP by the caller. Negations (`not junk`, `don't remove`) and answers containing
-   both tokens are UNCLEAR on purpose: if the model contradicts itself, no bet is made.
+   both tokens are UNCLEAR on purpose: if the model contradicts itself, no bet is made. On the
+   on-device engine, JUNK additionally requires a positive score **and** promotional evidence.
 3. Protected-app matching over-protects. It is a substring test, so an entry that is too broad
    protects too much. Entries shorter than 3 characters are ignored so a stray `a` cannot blanket
    the device.
 4. Functional notifications never leave the device. The gate is a list of categories and flags, not
-   a judgement call, and it runs before any notification text is read or any request is built. (The
-   service does read whether a key *exists* before this point, to avoid queueing work that cannot
-   run; it never reads the key's value there.)
+   a judgement call, and it runs before any notification text is read or any request is built. The
+   list includes `msg`, `email` and `event`; a brand's promotional SMS that uses `msg` is kept, and
+   that is the accepted trade. (The service does read whether a key *exists* before this point, to
+   avoid queueing work that cannot run; it never reads the key's value there.)
 5. An UNCLEAR verdict is never cached. It is usually transient — a flaky provider, a rate limit, a
-   model that rambled — so the next identical notification deserves a fresh attempt.
+   model that rambled — so the next identical notification deserves a fresh attempt. An on-device
+   UNCLEAR is recorded as a normal "kept (unsure)" success, not as an error; only a provider
+   failure (`Classifier.Outcome.problem`) is reported as "needs attention".
+6. Guard rules are layer 1 for both engines. They live in `Guards` and are called once in
+   `NotifService.inspect`, before the engine split. `LocalClassifier` delegates to the same class
+   only so direct callers (the Settings self-test and the tests) keep the same protection.
+7. A positive model score is never sufficient on its own. The evidence gate (`Evidence`) must
+   fire; a model score is only evidence of shared vocabulary with the training corpus.
 
 ## The reliability policy, with numbers
 
@@ -61,7 +97,7 @@ good it looks.
 | Rate limiter | 40 calls / 60 s, token bucket | Bounds cost. A normal phone never gets near it |
 | Connect / read timeout | 8 s / 15 s | Long enough for a cold model, short enough that a notification is still fresh |
 | Retry | at most 1, only if the wait ≤ 5 s | A verdict that arrives 30 s late is worthless; the notification has been read by then |
-| Backoff | `min(30 s, 1 s · 2^attempt)` + ≤ 250 ms jitter | Jitter keeps two workers from retrying in lockstep |
+| Backoff | `min(30 s, 1 s · 2^attempt)`, no jitter | Two workers and at most one retry per notification; the retry path uses the deterministic delay. `Backoff.withJitter` exists and is tested, but **is not called in production** — earlier versions of this document wrongly credited jitter to the retry path |
 | Retry-After | seconds form honoured | The date form is ignored: clock skew turns it into an absurd wait |
 | Answer budget | `max_tokens` 1024 | Non-reasoning models emit one word and are billed for one word; reasoning models need headroom or they return nothing |
 | Cache | 300 entry LRU, keyed on content + config hash | Config is in the key, so changing the prompt invalidates every verdict |
@@ -95,7 +131,7 @@ see [PLAY.md](PLAY.md).
 | Question | File |
 |---|---|
 | Why wasn't my notification filtered? | `NotifService.inspect` — the gate, top to bottom |
-| Why did it answer that way? | `Strictness.prompt` plus `Prompt.safetyRules`, then **Test** in Where answers come from |
+| Why did it answer that way? | `LocalClassifier.classify`, `Evidence` and `Guards`; the measurements and the retraining recipe are in [CLASSIFIER.md](CLASSIFIER.md) |
 | What counts as an answer? | `Decision.parse` and the assertions in `test/LogicTest.java` |
 | Why is it keeping everything? | `Prefs.lastError`, then the circuit breaker and rate limiter |
 | Where does a new user get stuck? | `HomeActivity` — the consent state, then the checklist of what is still missing |

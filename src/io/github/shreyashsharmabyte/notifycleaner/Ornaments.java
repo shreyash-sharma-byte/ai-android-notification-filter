@@ -5,8 +5,12 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.os.Build;
 import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.Checkable;
 
 /**
  * The drawn furniture of the Editorial direction: a printer's fleuron, a toggle, a selection ring
@@ -35,6 +39,8 @@ final class Ornaments {
             paint.setStrokeCap(Paint.Cap.ROUND);
             dot.setColor(colour);
             setLayerType(LAYER_TYPE_SOFTWARE, null);
+            // An ornament, not content: TalkBack should not stop on a printer's mark.
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
         @Override
@@ -64,8 +70,12 @@ final class Ornaments {
     /**
      * A pill toggle drawn by hand: hairline when off, filled accent when on, thumb slides in 180ms.
      * The platform switch is the one widget that would have made this look like a settings app.
+     *
+     * <p>It is a real {@link Checkable}: the accessibility node is announced as a switch with its
+     * checked state, and the 48dp measured box is the touch target while the pill itself stays
+     * 44×26dp.
      */
-    static final class Toggle extends View {
+    static final class Toggle extends View implements Checkable {
         interface Listener { void onChecked(boolean on); }
 
         private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -76,6 +86,7 @@ final class Ornaments {
         private float fraction;
         private Listener listener;
         private ValueAnimator anim;
+        private String label;
 
         Toggle(Context ctx, int accent, int onAccent, int line, int surface, int muted) {
             super(ctx);
@@ -92,11 +103,35 @@ final class Ornaments {
 
         void setListener(Listener l) { this.listener = l; }
 
+        /** The app this switch protects, e.g. "WhatsApp, protected". */
+        void setLabel(String value) {
+            label = value;
+            updateDescription();
+        }
+
+        @Override
+        public boolean isChecked() { return checked; }
+
+        @Override
+        public void setChecked(boolean on) { setChecked(on, true); }
+
+        @Override
+        public void toggle() { performClick(); }
+
         void setChecked(boolean on, boolean animate) {
-            if (checked == on) { fraction = on ? 1f : 0f; invalidate(); return; }
+            if (checked == on) {
+                fraction = on ? 1f : 0f;
+                updateDescription();
+                invalidate();
+                return;
+            }
             checked = on;
+            updateDescription();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setStateDescription(on ? "on" : "off");
+            }
             if (anim != null) anim.cancel();
-            if (!animate) {
+            if (!animate || !ValueAnimator.areAnimatorsEnabled()) {
                 fraction = on ? 1f : 0f;
                 invalidate();
                 return;
@@ -114,11 +149,26 @@ final class Ornaments {
             anim.start();
         }
 
-        boolean isChecked() { return checked; }
+        private void updateDescription() {
+            String state = checked ? "on" : "off";
+            String text = label == null || label.isEmpty() ? "Switch" : label;
+            setContentDescription(text + ", " + state);
+            if (isShown()) sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+        }
+
+        @Override
+        public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(info);
+            info.setClassName("android.widget.Switch");
+            info.setCheckable(true);
+            info.setChecked(checked);
+            info.setClickable(true);
+            info.setFocusable(true);
+        }
 
         @Override
         protected void onMeasure(int w, int h) {
-            setMeasuredDimension((int) (44 * density), (int) (26 * density));
+            setMeasuredDimension((int) (48 * density), (int) (48 * density));
         }
 
         @Override
@@ -132,29 +182,37 @@ final class Ornaments {
         @Override
         protected void onDraw(Canvas canvas) {
             float w = getWidth(), h = getHeight();
-            float r = h / 2f;
+            // The pill stays its printed 44×26dp; the extra box around it is the touch target.
+            float pillW = Math.min(w, 44 * density);
+            float pillH = Math.min(h, 26 * density);
+            float left = (w - pillW) / 2f;
+            float top = (h - pillH) / 2f;
+            float right = left + pillW;
+            float bottom = top + pillH;
+            float r = pillH / 2f;
             float inset = density * 0.7f;
 
             track.setStyle(Paint.Style.FILL);
             track.setColor(surface);
-            canvas.drawRoundRect(inset, inset, w - inset, h - inset, r, r, track);
+            canvas.drawRoundRect(left + inset, top + inset, right - inset, bottom - inset, r, r, track);
 
             track.setStyle(Paint.Style.STROKE);
             track.setStrokeWidth(Math.max(1f, density * 0.9f));
             track.setColor(Screen.mix(line, accent, fraction));
-            canvas.drawRoundRect(inset, inset, w - inset, h - inset, r, r, track);
+            canvas.drawRoundRect(left + inset, top + inset, right - inset, bottom - inset, r, r, track);
 
             if (fraction > 0.02f) {
                 track.setStyle(Paint.Style.FILL);
                 track.setColor(Screen.alpha(accent, fraction));
-                canvas.drawRoundRect(inset, inset, w - inset, h - inset, r, r, track);
+                canvas.drawRoundRect(left + inset, top + inset, right - inset, bottom - inset, r, r, track);
             }
 
             float pad = density * 3.5f;
             float tr = r - pad;
-            float left = pad + tr;
-            float right = w - pad - tr;
-            float cx = left + (right - left) * fraction;
+            float from = left + pad + tr;
+            float to = right - pad - tr;
+            boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+            float cx = rtl ? to - (to - from) * fraction : from + (to - from) * fraction;
             thumb.setColor(Screen.mix(muted, onAccent, fraction));
             canvas.drawCircle(cx, h / 2f, tr - density * 0.4f, thumb);
         }
@@ -175,6 +233,8 @@ final class Ornaments {
             this.selected = selected;
             this.density = getResources().getDisplayMetrics().density;
             ring.setStyle(Paint.Style.STROKE);
+            // The row is the control; the ring is its selection mark.
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
         @Override
@@ -204,18 +264,29 @@ final class Ornaments {
     static final class LeftRule extends android.graphics.drawable.Drawable {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final int width;
+        private final boolean rightEdge;
         private int alpha = 255;
 
         LeftRule(int colour, int widthPx) {
+            this(colour, widthPx, false);
+        }
+
+        /** @param rightEdge draw on the trailing edge for a right-to-left layout */
+        LeftRule(int colour, int widthPx, boolean rightEdge) {
             paint.setColor(colour);
             this.width = Math.max(1, widthPx);
+            this.rightEdge = rightEdge;
         }
 
         @Override
         public void draw(Canvas canvas) {
             android.graphics.Rect b = getBounds();
             paint.setAlpha(alpha);
-            canvas.drawRect(b.left, b.top, b.left + width, b.bottom, paint);
+            if (rightEdge) {
+                canvas.drawRect(b.right - width, b.top, b.right, b.bottom, paint);
+            } else {
+                canvas.drawRect(b.left, b.top, b.left + width, b.bottom, paint);
+            }
         }
 
         @Override
@@ -247,6 +318,7 @@ final class Ornaments {
             ring.setStyle(Paint.Style.STROKE);
             mark.setStyle(Paint.Style.STROKE);
             mark.setStrokeCap(Paint.Cap.ROUND);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
         @Override

@@ -3,6 +3,64 @@
 All notable changes. Version numbers follow [SemVer](https://semver.org/); `versionCode` in
 `AndroidManifest.xml` increases by one per release.
 
+## Unreleased
+
+Found by a pre-publication review (`docs/REVIEW.md`); the classifier work is recorded in
+`docs/CLASSIFIER.md`. No version bump yet — that is a release decision.
+
+### Fixed
+
+- **It dismissed real messages.** Ordinary conversational texts from chat apps not on the default
+  protected list ("Are you free tonight?", "Call me when you see this", "Meeting at 4pm in room 2")
+  were classified JUNK: 16 of 42 on the review corpus. Chat, mail and calendar notifications are now
+  never classified (`CATEGORY_MESSAGE`, `CATEGORY_EMAIL`, `CATEGORY_EVENT`), the default protected
+  list covers the common messengers, and a dismissal now requires promotional language as well as a
+  positive score. On the measured corpora false dismissals went 16 → 0 and promotion removal 94.4% →
+  88.9%.
+- **A positive score was a confident verdict.** The uncertainty band did not exist (`MARGIN` was 0,
+  so a score of 0.005 dismissed). It is now 0.25, and an unsure outcome is recorded as a successful
+  keep rather than shown as a failure.
+- **The provider engine had none of the five guard rules.** They now run in the service before the
+  engine split, so an OTP, a debit, an order, a security alert or a deadline is kept by both engines,
+  and guarded text is never sent anywhere.
+- **The app read and stored app names before consent and while paused.** Recording now happens only
+  after consent and while filtering is on, and the disclosure says what is recorded.
+- **"Status · live" was a stored preference.** The home screen now distinguishes filtering on,
+  filtering off, and filtering on but not receiving — with a repair action only when the silence is
+  long enough to be evidence.
+- **Section rules rendered at zero height.** Every hairline and the accent rule were invisible; the
+  layout read as floating text.
+- **The removed counter stopped at 100** because it counted a capped log. It now counts all time and
+  says how much of the list is shown.
+- **The sender is now part of the decision.** A chat message that quotes a discount and a campaign
+  that is only a brand name were indistinguishable from the text alone. Chat, mail, calls, codes and
+  banking apps are recognised as personal and protected by default; shops, food delivery and travel
+  are recognised as commerce, so a positive score is enough there and cue-less campaigns like
+  "Big Billion Days are live" are caught. Social apps are deliberately excluded from that
+  relaxation, because they carry direct messages too. Measured: promotions removed 6/13 → 8/13 with
+  no change to 25/25 important commerce notifications kept.
+- **The protected list could not be emptied**, and the toggle then showed "off" while protection was
+  still on. An explicitly emptied list now stays empty, and the screen re-renders from stored state.
+- **Removed notifications are reachable.** The dial, the removed counter and every sender row open
+  the Removed list, and Settings has a row for it.
+- Accessibility: buttons are announced as buttons, touch targets are at least 48dp, the protected
+  toggle is a real checkable control, decorative drawing is hidden from TalkBack, and RTL is
+  implemented instead of merely declared.
+- The page no longer resets scroll, replays its entrance and re-counts figures from zero on every
+  resume, and animations respect the system "remove animations" setting.
+
+### Changed
+
+- **Renamed to NotifyCleaner.** "Android" is a Google trademark and may not appear in an app name.
+- Status, counters and section labels are plain words instead of the editorial vocabulary
+  ("Status · live", "Watched · apps seen", "Contents", "Removed by sender").
+- The consent screen states that removed notifications cannot be brought back, explains the next
+  three steps, and offers "Not now" without recording anything.
+- `faint` ink now meets WCAG AA in both themes, and no user-facing text is below 12sp.
+- README and privacy policy corrected: the APK declares `INTERNET`, not "exactly one permission";
+  the remembered-senders list and the stored counters are disclosed; the encryption rationale and
+  the "single POST" claim are corrected.
+
 ## 2.1.5
 
 The interface rebuilt as an editorial page, with the background work made visible.

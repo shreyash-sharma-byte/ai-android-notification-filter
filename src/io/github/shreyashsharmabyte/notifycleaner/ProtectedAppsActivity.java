@@ -9,8 +9,8 @@ import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.TextWatcher;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -23,16 +23,19 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Choose which apps the classifier never sees.
  *
- * <p>This replaces a text box that asked the user to type package names from memory, which is why the
- * protected list looked like a clump of text and was unpleasant to change. Now it is a list of real
- * apps with switches: label, package name, icon. Two sources are merged — apps that can be launched,
- * and apps that have actually posted a notification on this device — so the common case needs no
- * typing at all. A manual entry is still available for anything missing.
+ * <p>Two sources are merged — apps that can be launched, and apps that have actually posted a
+ * notification on this device — so the common case needs no typing. A manual entry is still
+ * available, and an entry that matches no installed app is shown rather than hidden: a typo used to
+ * disappear into the list, counted but unremovable.
+ *
+ * <p>The switches re-read the stored list after every change, so the screen and the service cannot
+ * disagree about what is protected.
  */
 public class ProtectedAppsActivity extends Screen {
 
@@ -58,7 +61,7 @@ public class ProtectedAppsActivity extends Screen {
         super.onCreate(state);
 
         LinearLayout root = vertical();
-        header(root, "Protected apps", "\u2039 Back", "Add", new View.OnClickListener() {
+        header(root, "Protected apps", "Back", "Add", new View.OnClickListener() {
             @Override
             public void onClick(View v) { addByName(); }
         });
@@ -67,6 +70,11 @@ public class ProtectedAppsActivity extends Screen {
         summary.setTypeface(android.graphics.Typeface.create("sans-serif-medium",
                 android.graphics.Typeface.NORMAL));
         root.addView(summary, margins(16, 20, 20, 4));
+
+        TextView explainer = text("The default list protects messaging, phone, bank/UPI and Gmail "
+                + "apps: they carry messages, codes and payments.", 13, c.muted, false);
+        explainer.setLineSpacing(dp(4), 1f);
+        root.addView(explainer, margins(4, 20, 24, 8));
 
         search = field(root, "Search", "", null, false, 1);
         search.setHint("App name or package");
@@ -78,7 +86,8 @@ public class ProtectedAppsActivity extends Screen {
         root.addView(listContainer);
 
         root.addView(rule(), margins(18, 20, 20, 0));
-        help(root, "Partial names work: \u201Cpaytm\u201D protects every package containing it.");
+        help(root, "You can also add an app by package name. Any app on this list is never read "
+                + "and never filtered.");
 
         loadApps();
         render("");
@@ -148,19 +157,24 @@ public class ProtectedAppsActivity extends Screen {
         }
     }
 
+    private String query() {
+        return search == null ? "" : search.getText().toString().trim();
+    }
+
     private void render(String query) {
         if (listContainer == null) return;
         listContainer.removeAllViews();
-        String q = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+        String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        String list = prefs.allowList();
 
         int shown = 0;
         for (final Entry entry : all) {
             boolean match = q.isEmpty()
-                    || entry.label.toLowerCase(java.util.Locale.ROOT).contains(q)
-                    || entry.pkg.toLowerCase(java.util.Locale.ROOT).contains(q);
+                    || entry.label.toLowerCase(Locale.ROOT).contains(q)
+                    || entry.pkg.toLowerCase(Locale.ROOT).contains(q);
             if (!match) continue;
             if (shown > 0) divider(listContainer);
-            listContainer.addView(appRow(entry));
+            listContainer.addView(appRow(entry, list));
             shown++;
         }
         if (shown == 0) {
@@ -168,55 +182,164 @@ public class ProtectedAppsActivity extends Screen {
                             : "No app matches \"" + query + "\".", 15, c.muted),
                     margins(18, 20, 20, 16));
         }
+
+        renderUnmatched(listContainer, list, q);
     }
 
-    private View appRow(final Entry entry) {
+    /**
+     * Entries in the stored list that match no installed app. These used to be invisible: counted
+     * in "N apps protected", never readable and never removable. Excluding the built-in defaults
+     * keeps a fresh install from showing a wall of apps that simply are not on this phone.
+     */
+    private void renderUnmatched(LinearLayout parent, String list, String query) {
+        List<String> orphans = new ArrayList<String>();
+        for (String entry : AllowList.entries(list)) {
+            if (isDefaultEntry(entry)) continue;
+            if (query != null && !query.isEmpty() && !entry.toLowerCase(Locale.ROOT).contains(query)) {
+                continue;
+            }
+            if (!matchesInstalledApp(entry)) orphans.add(entry);
+        }
+        if (orphans.isEmpty()) return;
+
+        parent.addView(rule(), margins(18, 20, 20, 0));
+        parent.addView(kicker("Saved entries with no installed app", c.muted),
+                margins(16, 20, 20, 0));
+        for (String entry : orphans) {
+            parent.addView(unmatchedRow(entry));
+        }
+    }
+
+    /** @return true when the entry protects at least one app this screen knows about */
+    private boolean matchesInstalledApp(String entry) {
+        for (Entry e : all) {
+            if (Filters.isProtected(entry, e.pkg)) return true;
+        }
+        return false;
+    }
+
+    private boolean isDefaultEntry(String entry) {
+        String needle = entry == null ? "" : entry.trim();
+        if (needle.isEmpty()) return false;
+        for (String part : Prefs.DEFAULT_ALLOW.split(",")) {
+            if (part.trim().equalsIgnoreCase(needle)) return true;
+        }
+        return false;
+    }
+
+    private View unmatchedRow(final String entry) {
+        LinearLayout r = row();
+        r.setMinimumHeight(dp(56));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.addView(text(entry, 15, c.ink, false));
+        TextView note = text("No installed app matches this saved entry.", 12, c.muted, false);
+        note.setLineSpacing(dp(3), 1f);
+        labels.addView(note, margins(2, 0, 0, 0));
+        r.addView(labels, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView remove = action("Remove", true, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                prefs.setAllowList(removeExact(prefs.allowList(), entry));
+                render(query());
+                refreshSummary();
+            }
+        });
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rp.setMarginStart(dp(12));
+        r.addView(remove, rp);
+        remove.setContentDescription("Remove " + entry);
+        return r;
+    }
+
+    /**
+     * Removes one exact saved entry. {@link AllowList#remove} deliberately removes anything the
+     * target matches, which is right for a toggle but would take a neighbouring rule with it here.
+     */
+    private String removeExact(String list, String entry) {
+        if (list == null || list.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String part : list.split("[,\\s;]+")) {
+            String candidate = part.trim();
+            if (candidate.isEmpty() || candidate.equalsIgnoreCase(entry)) continue;
+            if (sb.length() > 0) sb.append(',');
+            sb.append(candidate);
+        }
+        return sb.toString();
+    }
+
+    private View appRow(final Entry entry, String list) {
         LinearLayout r = row();
         r.setMinimumHeight(dp(56));
 
         if (entry.icon != null) {
             ImageView icon = new ImageView(this);
             icon.setImageDrawable(entry.icon);
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(26), dp(26));
-            ip.rightMargin = dp(12);
+            ip.setMarginEnd(dp(12));
             r.addView(icon, ip);
         }
 
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
         labels.addView(text(entry.label, 15, c.ink, false));
-        TextView pkg = text(entry.pkg, 10.5f, c.faint, false);
+        TextView pkg = text(entry.pkg, 12, c.faint, false);
         pkg.setLetterSpacing(0.02f);
         pkg.setSingleLine(true);
-        pkg.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        pkg.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         labels.addView(pkg, margins(2, 0, 0, 0));
         r.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         final Ornaments.Toggle toggle = new Ornaments.Toggle(this, c.accent, c.onAccent, c.line,
                 c.surface, c.muted);
-        boolean already = prefs.allowList() != null
-                && Filters.isProtected(prefs.allowList(), entry.pkg);
+        final boolean already = Filters.isProtected(list, entry.pkg);
         toggle.setChecked(already, false);
-        toggle.setContentDescription(entry.label + (already ? ", protected" : ", not protected"));
+        toggle.setLabel(entry.label + (already ? ", protected" : ", not protected"));
         toggle.setListener(new Ornaments.Toggle.Listener() {
             @Override
             public void onChecked(boolean on) {
-                prefs.setAllowList(AllowList.toggle(prefs.allowList(), entry.pkg, on));
-                toggle.setContentDescription(entry.label + (on ? ", protected" : ", not protected"));
-                refreshSummary();
+                apply(entry.pkg, on);
             }
         });
-        r.addView(toggle, new LinearLayout.LayoutParams(dp(44), dp(26)));
+        r.addView(toggle, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        // The whole row is a target, not only the pill. The row itself is not a second
+        // accessibility node: the switch inside it is the control TalkBack should stop on.
+        r.setBackground(ripple());
+        r.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                boolean next = !toggle.isChecked();
+                toggle.setChecked(next, true);
+                apply(entry.pkg, next);
+            }
+        });
+        r.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         return r;
+    }
+
+    /** One write path: store the list, then re-render every row from what was stored. */
+    private void apply(String pkg, boolean on) {
+        prefs.setAllowList(AllowList.toggle(prefs.allowList(), pkg, on));
+        render(query());
+        refreshSummary();
     }
 
     private void refreshSummary() {
         if (summary == null) return;
         int count = Filters.protectedCount(prefs.allowList());
-        summary.setText(count == 0
-                ? "No apps protected. Messages and OTP codes will be classified."
-                : count + (count == 1 ? " app protected" : " apps protected"));
-        summary.setTextColor(count == 0 ? c.bad : c.muted);
+        if (count == 0) {
+            summary.setText("No apps protected.");
+            summary.setTextColor(c.muted);
+        } else {
+            summary.setText(count + (count == 1 ? " app protected" : " apps protected"));
+            summary.setTextColor(c.muted);
+        }
     }
 
     private void addByName() {
@@ -225,7 +348,7 @@ public class ProtectedAppsActivity extends Screen {
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT);
         LinearLayout holder = new LinearLayout(this);
-        holder.setPadding(dp(20), dp(8), dp(20), 0);
+        holder.setPaddingRelative(dp(20), dp(8), dp(20), 0);
         holder.addView(input);
         new AlertDialog.Builder(this)
                 .setTitle("Add by name")
@@ -242,7 +365,7 @@ public class ProtectedAppsActivity extends Screen {
                         }
                         prefs.setAllowList(AllowList.add(prefs.allowList(), value));
                         loadApps();
-                        render(search == null ? "" : search.getText().toString());
+                        render(query());
                         refreshSummary();
                     }
                 })

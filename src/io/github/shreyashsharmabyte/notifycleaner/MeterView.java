@@ -20,6 +20,9 @@ final class MeterView extends View {
 
     MeterView(Context context) {
         super(context);
+        // A length standing for a count is comparison, not content: the row's figure is the
+        // reading, so TalkBack should not stop on the bar.
+        setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
     void palette(Screen.Palette c) {
@@ -40,7 +43,12 @@ final class MeterView extends View {
         canvas.drawRect(0, base - dp(0.6f), w, base, paint);
         if (fraction <= 0f) return;
         paint.setColor(accent);
-        canvas.drawRect(0, base - dp(1.7f), Math.max(dp(2), w * fraction), base, paint);
+        float measure = Math.max(dp(2), w * fraction);
+        if (getLayoutDirection() == LAYOUT_DIRECTION_RTL) {
+            canvas.drawRect(w - measure, base - dp(1.7f), w, base, paint);
+        } else {
+            canvas.drawRect(0, base - dp(1.7f), measure, base, paint);
+        }
     }
 
     private float dp(float value) {

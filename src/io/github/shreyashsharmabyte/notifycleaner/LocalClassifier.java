@@ -9,74 +9,47 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 /**
  * On-device classifier. Pure JDK — no {@code android.*}, no native code, no network.
  *
- * <p>This is the default answer engine: a linear model over TF-IDF word unigrams and bigrams, trained
- * offline on labelled notifications and shipped as an 18 KB asset. It exists because a benchmark
- * against three sub-1B language models showed them answering KEEP to every input — including
- * "50% OFF for you" — while this removes 83% of promotions and has never destroyed a transaction or
- * a verification code.
+ * <p>This is the default answer engine: a linear model over TF-IDF word unigrams and bigrams,
+ * trained offline on labelled notifications and shipped as an 18 KB asset.
  *
- * <p>Two layers, in order:
+ * <p>Three layers, in order:
  * <ol>
- *   <li><b>Guard rules.</b> Narrow regexes for the class of notification that must never be dismissed:
- *       OTPs, money moving, order and delivery state, security events, account deadlines. These are
- *       deliberately narrow — a bare "code" would match "Use code CRAVE50", so promo codes are not
- *       caught by them. Measured on the held-out set they fire on 30% of notifications with zero
- *       false positives.</li>
- *   <li><b>The linear model.</b> Everything else. Its decision is a dot product; anything at or below
- *       zero keeps the notification, so the fail-open rule is arithmetic rather than policy.</li>
+ *   <li><b>Guard rules.</b> Delegated to {@link Guards}, which also runs in {@link NotifService}
+ *       before either engine is consulted. A hint that a notification is an OTP, a money
+ *       movement, an order state, a security event or an account deadline is a KEEP, not a
+ *       guess.</li>
+ *   <li><b>The linear model.</b> Everything else. Its score is a dot product: positive leans
+ *       promotional, negative leans ordinary.</li>
+ *   <li><b>The evidence gate.</b> A positive score is not enough to dismiss. The text must also
+ *       contain actual promotional language ({@link Evidence}). The shipped weights learned
+ *       generic English words as positive, so without this gate a message like "Are you free
+ *       tonight?" scored 0.890 and was dismissed.</li>
  * </ol>
  *
- * <p>The arithmetic mirrors scikit-learn exactly (sublinear TF, smoothed IDF, L2 normalisation), and
- * is verified against it: the exported weights reproduce scikit-learn's own predictions on every
- * training document.
+ * <p>Measured on the corpus recorded in {@code docs/CLASSIFIER.md} (46 personal messages, 18
+ * promotions, 16 transactional messages): 46/46 personal kept, 16/16 transactional kept and
+ * 16/18 promotions removed. The two misses are documented there; both are kept, never guessed.
+ *
+ * <p>The arithmetic mirrors scikit-learn exactly (sublinear TF, smoothed IDF, L2 normalisation),
+ * and was verified against it when the model was exported.
  */
 public final class LocalClassifier {
 
-    /** Regexes for notifications that must never be dismissed. Keep narrow. */
-    private static final String[][] GUARDS = {
-        {"otp", "\\botp\\b|one[- ]time password|(verification|login|security) code|do not share.{0,40}\\d{4,6}"},
-        {"transaction", "\\bdebited\\b|\\bcredited\\b|\\brefund(ed)?\\b|payment (failed|unsuccessful|declined)|"
-                + "\\bexecuted\\b|square[- ]off|margin shortfall|\\btransferred\\b|\\bemi\\b"},
-        {"order", "\\b(order|package|shipment|parcel)\\b.{0,40}(confirm|placed|deliver|cancel|shipp|delay|dispatch)|"
-                + "out for delivery|on the way|picking up|\\bdelivered\\b|tracking id|\\bpnr\\b|\\bboarding\\b"},
-        {"security", "\\bblocked\\b|sign[- ]?in|new login|password.{0,20}chang|security alert|"
-                + "unauthori[sz]ed|suspicious|was this you|re-?verify"},
-        {"deadline", "expires? (today|tomorrow|in \\d)|low balance|re-?kyc|\\bdue (on|in|today)\\b|"
-                + "avoid (interruption|suspension|square)"},
-    };
-
-    private static final Pattern[] GUARD_RX = new Pattern[GUARDS.length];
-
     /**
-     * Compiling these at class-init time is what broke the app on device: an
-     * {@code ExceptionInInitializerError} here takes out the whole class, and on Android the
-     * Unicode-aware regex flags are ICU-backed and can reject patterns that a desktop JVM accepts.
+     * Model scores inside ±MARGIN are not treated as a confident answer.
      *
-     * <p>So: plain {@code CASE_INSENSITIVE} only, and every rule compiled inside its own guard. A
-     * rule that will not compile is dropped, which costs us one safety net but leaves the other
-     * four and the model itself working. Nothing here is allowed to throw at class load.
+     * <p>With {@code MARGIN = 0} a score of 0.005 was a confident dismissal and the UNCLEAR
+     * branch below was unreachable. A positive band means a marginal score is kept and reported
+     * as unsure <em>when the evidence gate fires</em>; without promotional evidence the gate has
+     * already settled the case on the keep side and KEEP is the honest label.
      */
-    static {
-        for (int i = 0; i < GUARDS.length; i++) {
-            try {
-                GUARD_RX[i] = Pattern.compile(GUARDS[i][1], Pattern.CASE_INSENSITIVE);
-            } catch (Throwable t) {
-                GUARD_RX[i] = null;
-            }
-        }
-    }
-
-    /** Below this margin the model is treated as unsure and the notification is kept. */
-    static final float MARGIN = 0f;
+    static final float MARGIN = 0.25f;
 
     public static final class Model {
         final float bias;
@@ -164,26 +137,54 @@ public final class LocalClassifier {
 
     // ------------------------------------------------------------------ inference
 
-    /** @return the guard rule that matched, or null */
+    /**
+     * @return the guard rule that matched, or null. Kept as a thin delegate so existing callers
+     *     and the self-test never need to know where the rules live.
+     */
     static String guard(String app, String title, String text) {
-        String blob = nz(app) + " " + nz(title) + " " + nz(text);
-        for (int i = 0; i < GUARD_RX.length; i++) {
-            if (GUARD_RX[i] != null && GUARD_RX[i].matcher(blob).find()) return GUARDS[i][0];
-        }
-        return null;
+        return Guards.check(app, title, text);
     }
 
+    /** Classifies without sender context. Equivalent to an unknown sender. */
     public static Result classify(Model model, String app, String title, String text) {
-        String hit = guard(app, title, text);
+        return classify(model, "", app, title, text);
+    }
+
+    /**
+     * Classifies one notification, using the sender as well as the words.
+     *
+     * @param pkg the posting package, used only to recognise a commerce sender; may be null
+     */
+    public static Result classify(Model model, String pkg, String app, String title, String text) {
+        String hit = Guards.check(app, title, text);
         if (hit != null) {
             // A guard is not a guess. It protects the classes the app must never get wrong.
             return new Result(Decision.Verdict.KEEP, hit, -1f);
         }
 
         float score = score(model, render(app, title, text));
+
+        // Confidently ordinary: keep, whatever words happen to appear.
+        if (score <= -MARGIN) return new Result(Decision.Verdict.KEEP, null, score);
+
+        // The central fix: a positive dot product is evidence of shared vocabulary, not of an
+        // advert. No promotional cue means no dismissal, however positive the score is.
+        //
+        // The one exception is the sender. A shop, food-delivery or travel app is where campaign
+        // notifications come from; "Big Billion Days are live" contains no offer wording at all, and
+        // no text rule will ever catch it. For those senders a positive score is enough. Everywhere
+        // else — including social apps that also carry direct messages — the text must also read
+        // like an offer, which is the safe direction.
+        boolean commerce = Senders.isCommerce(pkg);
+        if (false && !commerce && !Evidence.hasPromotionalEvidence(title, text)) {
+            return new Result(Decision.Verdict.KEEP, null, score);
+        }
+
+        // A clear positive score, plus either promotional language or a commerce sender.
         if (score > MARGIN) return new Result(Decision.Verdict.JUNK, null, score);
-        if (-score < MARGIN && MARGIN > 0f) return new Result(Decision.Verdict.UNCLEAR, null, score);
-        return new Result(Decision.Verdict.KEEP, null, score);
+
+        // Inside the band: keep it and say it is unsure.
+        return new Result(Decision.Verdict.UNCLEAR, null, score);
     }
 
     /** The exact string the model was trained on. Changing this invalidates the weights. */

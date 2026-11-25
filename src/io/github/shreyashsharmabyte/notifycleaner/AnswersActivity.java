@@ -37,7 +37,7 @@ public class AnswersActivity extends Screen {
         normaliseEndpoint();
 
         LinearLayout root = vertical();
-        header(root, "Your provider", "\u2039 Back", "Test",
+        header(root, "Your provider", "Back", "Test",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) { runTest(); }
@@ -72,7 +72,7 @@ public class AnswersActivity extends Screen {
                 + "only setting that sends notification text off the phone.");
 
         sectionLabel(body, "Provider", "01");
-        body.addView(settingsRow("Answers from", preset.name, true, new View.OnClickListener() {
+        body.addView(settingsRow("Judged by", preset.name, true, new View.OnClickListener() {
             @Override
             public void onClick(View v) { pickProvider(); }
         }));
@@ -262,7 +262,7 @@ public class AnswersActivity extends Screen {
 
         resultLine.setVisibility(View.VISIBLE);
         resultLine.setTextColor(c.muted);
-        resultLine.setText("Testing\u2026");
+        resultLine.setText("Sending a test request\u2026");
 
         final CircuitBreaker breaker = new CircuitBreaker();
         final RateLimiter limiter = new RateLimiter();

@@ -28,13 +28,14 @@ public class RemovedActivity extends Screen {
     private LinearLayout whyBlock;
     private TextView summaryFigure;
     private TextView summaryLabel;
+    private TextView listCaption;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
 
         LinearLayout root = vertical();
-        header(root, "Removed", "\u2190 Back", "Clear", new View.OnClickListener() {
+        header(root, "Removed", "Back", "Clear", new View.OnClickListener() {
             @Override
             public void onClick(View v) { confirmClear(); }
         });
@@ -43,16 +44,23 @@ public class RemovedActivity extends Screen {
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.BOTTOM);
         summaryFigure = figure("0", 56, c.ink);
+        summaryFigure.setSingleLine(true);
+        summaryFigure.setMaxLines(1);
+        summaryFigure.setAutoSizeTextTypeUniformWithConfiguration(28, 56, 2,
+                android.util.TypedValue.COMPLEX_UNIT_SP);
         head.addView(summaryFigure);
         summaryLabel = kicker("Notifications removed");
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lp.leftMargin = dp(10);
+        lp.setMarginStart(dp(10));
         lp.bottomMargin = dp(12);
         head.addView(summaryLabel, lp);
         root.addView(head, margins(16, 20, 20, 0));
 
         root.addView(rule(), margins(14, 20, 20, 0));
+
+        listCaption = text("", 12, c.faint, false);
+        root.addView(listCaption, margins(10, 20, 24, 0));
 
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -80,8 +88,8 @@ public class RemovedActivity extends Screen {
         whyBlock.setOrientation(LinearLayout.VERTICAL);
         whyBlock.addView(rule(), margins(0, 20, 20, 12));
 
-        TextView why = text("Each was removed because the model answered JUNK. Tap one to protect "
-                + "that app.", 12, c.muted, false);
+        TextView why = text("Each was removed because the app judged it an advert. Tap one to "
+                + "protect that app.", 12, c.muted, false);
         why.setLineSpacing(dp(4), 1f);
         whyBlock.addView(why, margins(0, 20, 24, 0));
         return whyBlock;
@@ -118,20 +126,38 @@ public class RemovedActivity extends Screen {
             shown++;
         }
 
+        int total = Math.max(prefs.removedTotal(), shown);
         if (shown == 0) {
             LinearLayout empty = new LinearLayout(this);
             empty.setOrientation(LinearLayout.VERTICAL);
             empty.setGravity(Gravity.CENTER_HORIZONTAL);
             empty.addView(new Ornaments.Overture(this, c.line),
                     new LinearLayout.LayoutParams(dp(116), dp(116)));
-            TextView t = display("Nothing removed\nyet.", 26, c.ink);
+            TextView t = display(total == 0 ? "Nothing removed\nyet." : "The list is\nempty.",
+                    26, c.ink);
             t.setGravity(Gravity.CENTER_HORIZONTAL);
             empty.addView(t, margins(22, 0, 0, 0));
             list.addView(empty, margins(24, 40, 40, 24));
         }
 
-        summaryFigure.setText(String.valueOf(shown));
-        summaryLabel.setText(shown == 1 ? "Notification removed" : "Notifications removed");
+        // The big figure is every removal ever; the list is only the last 100. Saying which is
+        // which is the difference between an honest record and a counter that stops at 100.
+        summaryFigure.setText(String.valueOf(total));
+        summaryLabel.setText(total == 1 ? "Notification removed" : "Notifications removed");
+        summaryFigure.setContentDescription(total
+                + (total == 1 ? " notification removed, all time" : " notifications removed, all time"));
+        if (listCaption != null) {
+            if (shown == 0) {
+                listCaption.setText(total == 0 ? "" : "This record has been cleared.");
+                listCaption.setVisibility(total == 0 ? View.GONE : View.VISIBLE);
+            } else if (total > shown) {
+                listCaption.setText("Showing the last " + shown + " of " + total + ".");
+                listCaption.setVisibility(View.VISIBLE);
+            } else {
+                listCaption.setText("Showing all " + shown + ".");
+                listCaption.setVisibility(View.VISIBLE);
+            }
+        }
         if (whyBlock != null) {
             whyBlock.setVisibility(shown == 0 ? View.GONE : View.VISIBLE);
         }
@@ -153,10 +179,13 @@ public class RemovedActivity extends Screen {
         item.setOrientation(LinearLayout.HORIZONTAL);
         item.setPadding(dp(20), dp(14), dp(20), dp(14));
 
-        TextView time = text(hhmm(fields[0]), 10.5f, c.faint, false);
+        TextView time = text(hhmm(fields[0]), 12, c.faint, false);
         time.setTypeface(android.graphics.Typeface.create("monospace",
                 android.graphics.Typeface.NORMAL));
-        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(dp(46),
+        time.setSingleLine(true);
+        float fontScale = getResources().getConfiguration().fontScale;
+        int timeWidth = dp(46 * Math.max(1f, Math.min(fontScale, 1.8f)));
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(timeWidth,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         tp.topMargin = dp(2);
         item.addView(time, tp);
@@ -188,6 +217,9 @@ public class RemovedActivity extends Screen {
                 @Override
                 public void onClick(View v) { offerProtection(fields[1], fields[4]); }
             });
+            item.setContentDescription(fields[1] + " at " + hhmm(fields[0]) + ". "
+                    + (fields[2].isEmpty() ? "" : fields[2] + "."));
+            makeButton(item, "Opens protection options for " + fields[1]);
         }
         return item;
     }
@@ -227,7 +259,7 @@ public class RemovedActivity extends Screen {
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Clear the list?")
                 .setMessage("This forgets the record of what was removed. Notifications that were "
-                        + "already dismissed stay dismissed.")
+                        + "already dismissed stay dismissed, and the all-time count stays.")
                 .setPositiveButton("Clear", new android.content.DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(android.content.DialogInterface dialog, int which) {
@@ -241,8 +273,8 @@ public class RemovedActivity extends Screen {
 
     private void offerProtection(final String app, final String pkg) {
         new android.app.AlertDialog.Builder(this)
-                .setTitle("Was this not junk?")
-                .setMessage("\"" + app + "\" was removed because the model answered JUNK.\n\n"
+                .setTitle("Was this not an advert?")
+                .setMessage("\"" + app + "\" was removed because the app judged it an advert.\n\n"
                         + "Adding it to Protected apps means every notification from it is kept, is "
                         + "never read, and never leaves the device.")
                 .setPositiveButton("Never filter this app",
