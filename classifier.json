@@ -1,7 +1,7 @@
 {
-  "version": 7,
-  "url": "https://raw.githubusercontent.com/shreyash-sharma-byte/notifycleaner-classifier/main/model/model.tsv.gz",
-  "sha256": "6512b5d1def6e50d26a2127e3716c5a78d75c8505401568e6fb29e6f6f805fae",
-  "minApp": 58,
-  "notes": "v6: tighter regularisation, verified on held-out corpus"
+  "version": 9,
+  "url": "https://raw.githubusercontent.com/shreyash-sharma-byte/ai-android-notification-filter/main/assets/local_model.tsv.gz",
+  "sha256": "8ae10922c1ac7f0d191fdf11248011fc804ef647b264f849a3e9e4eeda4b4b82",
+  "minApp": 65,
+  "notes": "real-device retrain: job invites, insurance ads, comms/dev senders"
 }
