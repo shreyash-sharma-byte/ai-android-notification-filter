@@ -1,7 +1,7 @@
 {
-  "version": 6,
+  "version": 7,
   "url": "https://raw.githubusercontent.com/shreyash-sharma-byte/notifycleaner-classifier/main/model/model.tsv.gz",
-  "sha256": "55141e354e423315b3dbb57e33a7e5beab6ca983dc598f17558bad0b2da3e60a",
+  "sha256": "6512b5d1def6e50d26a2127e3716c5a78d75c8505401568e6fb29e6f6f805fae",
   "minApp": 58,
   "notes": "v6: tighter regularisation, verified on held-out corpus"
 }
