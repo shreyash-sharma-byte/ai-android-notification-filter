@@ -55,11 +55,23 @@ public final class LocalClassifier {
     };
 
     private static final Pattern[] GUARD_RX = new Pattern[GUARDS.length];
-    private static final Pattern TOKEN = Pattern.compile("\\b\\w\\w+\\b", Pattern.UNICODE_CHARACTER_CLASS);
 
+    /**
+     * Compiling these at class-init time is what broke the app on device: an
+     * {@code ExceptionInInitializerError} here takes out the whole class, and on Android the
+     * Unicode-aware regex flags are ICU-backed and can reject patterns that a desktop JVM accepts.
+     *
+     * <p>So: plain {@code CASE_INSENSITIVE} only, and every rule compiled inside its own guard. A
+     * rule that will not compile is dropped, which costs us one safety net but leaves the other
+     * four and the model itself working. Nothing here is allowed to throw at class load.
+     */
     static {
         for (int i = 0; i < GUARDS.length; i++) {
-            GUARD_RX[i] = Pattern.compile(GUARDS[i][1], Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+            try {
+                GUARD_RX[i] = Pattern.compile(GUARDS[i][1], Pattern.CASE_INSENSITIVE);
+            } catch (Throwable t) {
+                GUARD_RX[i] = null;
+            }
         }
     }
 
@@ -156,7 +168,7 @@ public final class LocalClassifier {
     static String guard(String app, String title, String text) {
         String blob = nz(app) + " " + nz(title) + " " + nz(text);
         for (int i = 0; i < GUARD_RX.length; i++) {
-            if (GUARD_RX[i].matcher(blob).find()) return GUARDS[i][0];
+            if (GUARD_RX[i] != null && GUARD_RX[i].matcher(blob).find()) return GUARDS[i][0];
         }
         return null;
     }
@@ -179,12 +191,32 @@ public final class LocalClassifier {
         return nz(app) + ": " + nz(title) + ". " + nz(text);
     }
 
+    /**
+     * Runs of two or more letters or digits, matching scikit-learn's default
+     * {@code (?u)\b\w\w+\b} for the ASCII these notifications are written in — without asking
+     * Android's regex engine to do it.
+     */
+    static void tokenize(String s, List<String> out) {
+        StringBuilder cur = new StringBuilder(24);
+        int n = s.length();
+        for (int i = 0; i <= n; i++) {
+            char ch = i < n ? Character.toLowerCase(s.charAt(i)) : ' ';
+            boolean word = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+                    || (ch > 127 && Character.isLetterOrDigit(ch));
+            if (word) {
+                cur.append(ch);
+            } else {
+                if (cur.length() >= 2) out.add(cur.toString());
+                cur.setLength(0);
+            }
+        }
+    }
+
     static float score(Model model, String rendered) {
         // scikit: tf' = 1 + ln(tf); x = tf' * idf; then L2-normalise the whole vector.
         Map<String, Integer> tf = new HashMap<String, Integer>();
         List<String> tokens = new ArrayList<String>();
-        Matcher m = TOKEN.matcher(rendered.toLowerCase(Locale.ROOT));
-        while (m.find()) tokens.add(m.group());
+        tokenize(rendered, tokens);
         for (int i = 0; i < tokens.size(); i++) {
             bump(tf, tokens.get(i));
             if (i + 1 < tokens.size()) bump(tf, tokens.get(i) + " " + tokens.get(i + 1));
