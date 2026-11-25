@@ -2,9 +2,9 @@
 <!--
   Adaptive foreground, 108x108, 72dp safe zone centred.
 
-  A bell in two parts: cream body, vermilion skirt. The skirt is the part that gets filtered away,
-  and the horizontal split is the only accent - no stem, no inner shape, nothing that can be misread
-  at small size.
+  Three notification rows - a list - with one vermilion diagonal dash cutting across them: the list,
+  and the stroke that stops it. One accent, two shapes, nothing that collides at 48dp. The dash is
+  the only colour, so there is nothing to compete with it.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -12,19 +12,22 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- handle -->
     <path
         android:fillColor="#F4EDE0"
-        android:pathData="M54,15.4a4.6,4.6 0 1,0 0,9.2a4.6,4.6 0 1,0 0,-9.2z" />
+        android:pathData="M34.5,34H73.5A4.5,4.5 0 0 1 73.5,43H34.5A4.5,4.5 0 0 1 34.5,34z" />
 
-    <!-- body, down to the split -->
     <path
         android:fillColor="#F4EDE0"
-        android:pathData="M39.6,52L39.6,39.4C39.6,30.6 46,24 54,24s14.4,6.6 14.4,15.4L68.4,52z" />
+        android:pathData="M34.5,48H73.5A4.5,4.5 0 0 1 73.5,57H34.5A4.5,4.5 0 0 1 34.5,48z" />
 
-    <!-- skirt -->
     <path
-        android:fillColor="#E4572E"
-        android:pathData="M39.6,52h28.8v8.4l5,7c1,1.4 0,3.4 -1.8,3.4H36.4c-1.8,0 -2.8,-2 -1.8,-3.4l5,-7z" />
+        android:fillColor="#F4EDE0"
+        android:pathData="M34.5,62H51.5A4.5,4.5 0 0 1 51.5,71H34.5A4.5,4.5 0 0 1 34.5,62z" />
+
+    <path
+        android:pathData="M72,78L36,32"
+        android:strokeColor="#E4572E"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
 
 </vector>
