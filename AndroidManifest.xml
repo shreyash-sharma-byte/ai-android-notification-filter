@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.shreyashsharmabyte.notifycleaner"
+    android:versionCode="23"
+    android:versionName="2.2.0">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Package visibility, not a permission. This is the supported way to list installed apps so the
+      protected-apps screen can show real names, and it avoids QUERY_ALL_PACKAGES, which Play treats
+      as a restricted permission.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/AppTheme">
+        <!--
+          Cleartext is enabled at the platform level for the optional custom endpoint: a provider
+          on the user's own network cannot present a certificate. The actual gate is in code:
+          Urls.allowed permits plain HTTP for loopback and RFC 1918 addresses only, and refuses a
+          public host over HTTP. Both are unit tested. The default engine never opens a socket.
+        -->
+
+        <activity
+            android:name=".HomeActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".AnswersActivity"
+            android:exported="false"
+            android:label="@string/title_answers"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/title_settings"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ProtectedAppsActivity"
+            android:exported="false"
+            android:label="@string/title_protected"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".RemovedActivity"
+            android:exported="false"
+            android:label="@string/title_removed"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
+            android:name=".PromptActivity"
+            android:exported="false"
+            android:label="@string/title_prompt"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- exported=true is required by the system to bind a notification listener;
+             BIND_NOTIFICATION_LISTENER_SERVICE means only the OS can connect. -->
+        <service
+            android:name=".NotifService"
+            android:exported="true"
+            android:label="@string/service_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

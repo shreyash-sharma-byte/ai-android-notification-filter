@@ -1,0 +1,16 @@
+<!--
+  Monochrome layer for Android 13+ themed icons: the same fleuron, in one colour, without the
+  contrast dot that would disappear into the mask.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M63,54 L85,54 M60.36,60.36 L75.92,75.92 M54,63 L54,85 M47.64,60.36 L32.08,75.92 M45,54 L23,54 M47.64,47.64 L32.08,32.08 M54,45 L54,23 M60.36,47.64 L75.92,32.08"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round" />
+</vector>

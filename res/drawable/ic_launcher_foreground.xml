@@ -1,0 +1,20 @@
+<!--
+  Adaptive-icon foreground: the printer's fleuron that sits in the app's masthead, drawn as eight
+  round-capped spokes and a solid centre. No image, no font — a vector of nine strokes.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M63,54 L85,54 M60.36,60.36 L75.92,75.92 M54,63 L54,85 M47.64,60.36 L32.08,75.92 M45,54 L23,54 M47.64,47.64 L32.08,32.08 M54,45 L54,23 M60.36,47.64 L75.92,32.08"
+        android:strokeColor="#FFE0562F"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round" />
+
+    <path
+        android:pathData="M54,48.5 a5.5,5.5 0 1,0 0.01,0 z"
+        android:fillColor="#FFF2EADD" />
+</vector>

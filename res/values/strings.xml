@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI Android Notification Filter</string>
+    <string name="service_label">AI Android Notification Filter</string>
+    <string name="title_answers">Answers</string>
+    <string name="title_settings">Settings</string>
+    <string name="title_protected">Protected apps</string>
+    <string name="title_removed">Removed</string>
+    <string name="title_prompt">Advanced prompt</string>
+</resources>
