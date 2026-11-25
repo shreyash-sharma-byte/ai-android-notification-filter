@@ -1,23 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Monochrome layer for themed icons (API 33+): same geometry, one colour, funnel still cut out. -->
+<!-- Monochrome trace of the supplied 1024px design; geometry and colours sampled from that image. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-
-    <path android:fillColor="#FFFFFF" android:pathData="M21.4,20.6h5.5v5.5h-5.5z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M31.6,20.6h44.5v5.5h-44.5z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M21.4,33.8h5.5v5.5h-5.5z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M31.6,33.8h34.8v5.5h-34.8z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M26.4,47.2h5.5v5.5h-5.5z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M36.7,47.2h44.5v5.5h-44.5z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M31.6,60.7h5.3v5.5h-5.3z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M41.7,60.7h30v5.5h-30z" />
-
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF" android:pathData="M21.41,20.67h5.38v5.38h-5.38z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M31.54,20.67h44.51v5.38h-44.51z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M21.41,33.86h5.38v5.38h-5.38z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M31.54,33.86h34.8v5.38h-34.8z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M32.06,20.78h44.09v4.75h-44.09z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M26.47,47.04h5.38v5.38h-5.38z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M36.6,47.04h44.51v5.38h-44.51z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M36.49,46.93h44.72v5.59h-44.72z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M31.43,60.22h5.48v5.38h-5.48z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M41.55,60.22h13.61v5.38h-13.61z" />
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#E4562E"
         android:fillType="evenOdd"
-        android:pathData="M70.9,55a16,16 0 1,0 0.01,0z M63.3,65.7H78.9L72.8,73.4V80.2H70.1V73.4z" />
-
+        android:pathData="M70.61,55.69a15.77,15.77 0 1,0 0.01,0z M62.86,65.71H78.36L72.88,72.77V79.42H68.45V72.77z" />
 </vector>
