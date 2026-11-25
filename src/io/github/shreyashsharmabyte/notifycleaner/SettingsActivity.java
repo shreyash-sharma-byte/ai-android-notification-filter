@@ -262,6 +262,11 @@ public class SettingsActivity extends Screen {
                     public void onClick(View v) { openNotificationSettings(); }
                 });
 
+        root.addView(settingsRowValue(root, "Export training data",
+                String.valueOf(prefs.trainingLog().isEmpty() ? 0 : prefs.trainingLog().split("\n").length) + " rows",
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { exportTraining(); }
+                }));
         protectedValue = settingsRowValue(root, "Protected apps", "",
                 new View.OnClickListener() {
                     @Override
@@ -288,6 +293,28 @@ public class SettingsActivity extends Screen {
         } catch (Exception e) {
             Toast.makeText(this, "Open Settings, Notifications, Device and app notifications",
                     Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Writes the local, redacted capture to a file the owner can pull off the phone. */
+    private void exportTraining() {
+        Prefs s = new Prefs(this);
+        String log = s.trainingLog();
+        if (log == null || log.trim().isEmpty()) {
+            Toast.makeText(this, "Nothing captured yet", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            java.io.File dir = getExternalFilesDir(null);
+            if (dir != null && !dir.exists()) dir.mkdirs();
+            java.io.File f = new java.io.File(dir, "notifcleaner-training.tsv");
+            java.io.PrintWriter w = new java.io.PrintWriter(f, "UTF-8");
+            w.println("ts\tapp\ttitle\ttext\tpkg\tverdict\tscore");
+            for (String l : log.split("\n")) if (l.length() > 0) w.println(l);
+            w.close();
+            Toast.makeText(this, "Exported to " + f.getAbsolutePath(), Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 }
