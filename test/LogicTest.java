@@ -35,6 +35,7 @@ public final class LogicTest {
         urls();
         strictness();
         allowList();
+        modelStore();
         trainingLog();
         localModels();
         categories();
@@ -425,6 +426,39 @@ public final class LogicTest {
         String log = TrainingLog.append("", e);
         for (int i = 0; i < 700; i++) log = TrainingLog.append(log, e);
         check("capture is capped", 600 == log.split("\n").length);
+    }
+
+    private static void modelStore() {
+        eq("sha256 of abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                ModelStore.sha256("abc".getBytes()));
+        String meta = ModelStore.meta(7, "deadbeef", 54, "notes");
+        eq("meta round trip", 7L, ModelStore.version(meta));
+        eq("field url", "deadbeef", ModelStore.field(meta, "sha256"));
+
+        byte[] gz = gzip("#bias\t-0.1\nfoo\t1.0\t0.5\nbar\t1.1\t-0.2\n".getBytes());
+        eq("feature count", 2, ModelStore.featureCount(gz));
+        check("two features is not acceptable", !ModelStore.acceptable(gz));
+        check("garbage rejected", ModelStore.featureCount("not gzip".getBytes()) < 0);
+        check("empty rejected", !ModelStore.acceptable(new byte[0]));
+
+        StringBuilder big = new StringBuilder("#bias\t0\n");
+        for (int i = 0; i < ModelStore.MIN_FEATURES; i++) big.append("tok").append(i).append("\t1.0\t0.1\n");
+        check("a full model is acceptable", ModelStore.acceptable(gzip(big.toString().getBytes())));
+
+        eq("missing version is zero", 0L, ModelStore.version("{}"));
+        eq("null meta is zero", 0L, ModelStore.version(null));
+    }
+
+    private static byte[] gzip(byte[] raw) {
+        try {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            try (java.util.zip.GZIPOutputStream gz = new java.util.zip.GZIPOutputStream(out)) {
+                gz.write(raw);
+            }
+            return out.toByteArray();
+        } catch (java.io.IOException e) {
+            return new byte[0];
+        }
     }
 
     private static void allowList() {
@@ -960,7 +994,8 @@ public final class LogicTest {
         int kept = 0;
         for (String[] row : PERSONAL) {
             LocalClassifier.Result r = LocalClassifier.classify(model, row[0], row[1], row[2]);
-            eq("personal message is KEEP: " + row[2], Decision.Verdict.KEEP, r.verdict);
+            // UNCLEAR also means kept (fail-open); only JUNK is a dismissal.
+            check("personal message is not dismissed: " + row[2], r.verdict != Decision.Verdict.JUNK);
             if (r.verdict != Decision.Verdict.JUNK) kept++;
         }
         eq("personal corpus kept", PERSONAL.length, kept);
@@ -982,7 +1017,7 @@ public final class LogicTest {
         eq("video app engagement is JUNK", Decision.Verdict.JUNK,
                 classifyFrom(model, "com.google.android.youtube", "YouTube", "YouTube",
                         "Watch the top 10 videos this week"));
-        eq("professional network nudge is in the band", Decision.Verdict.UNCLEAR,
+        eq("professional network nudge is JUNK", Decision.Verdict.JUNK,
                 classifyFrom(model, "com.linkedin.android", "LinkedIn", "LinkedIn",
                         "You appeared in 9 searches"));
 
@@ -1052,15 +1087,17 @@ public final class LogicTest {
      * score is just its bias. The old code had MARGIN = 0, so the UNCLEAR branch at all was dead.
      */
     private static void uncertaintyBand() {
-        check("margin is a positive band", LocalClassifier.MARGIN > 0f);
+        // 2.7.0 removed the uncertainty band: a positive score is a dismissal, and the
+        // threshold is baked into the model bias instead.
+        check("no uncertainty band", LocalClassifier.MARGIN == 0f);
 
         // "50% off" carries a strong cue; "hello off" carries only one weak one.
-        eq("band + evidence is UNCLEAR", Decision.Verdict.UNCLEAR,
+        eq("small positive is JUNK", Decision.Verdict.JUNK,
                 classify(constantModel(0.10f), "Shop", "", "50% off"));
         // 2.4.0 removed the evidence gate: the retrained weights carry the conversational class, so
         // a positive score is dismissed on the model alone. The band still resolves to UNCLEAR.
-        eq("band is UNCLEAR regardless of evidence", Decision.Verdict.UNCLEAR,
-                classify(constantModel(0.10f), "", "", "hello off"));
+        eq("small negative is KEEP", Decision.Verdict.KEEP,
+                classify(constantModel(-0.10f), "", "", "hello off"));
         eq("above the band + evidence is JUNK", Decision.Verdict.JUNK,
                 classify(constantModel(0.40f), "Shop", "", "50% off"));
         eq("above the band without evidence is JUNK", Decision.Verdict.JUNK,

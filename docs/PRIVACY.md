@@ -61,8 +61,13 @@ the endpoint field as part of the agreement you gave.
   recorded earlier.)
 - Your **contact list, device identifiers, location, accounts and notification history** are never
   read, so they can never be sent.
-- **Kept notifications are never stored.** Only notifications the app actually removed are recorded
-  — app name, title and text, capped at the last 100. **Clear** deletes them.
+- **Kept notifications are not stored by default.** Only notifications the app actually removed are
+  recorded — app name, title and text, capped at the last 100. **Clear** deletes them.
+- If you turn on **Save samples on this device** in Settings, the app also saves the app name, title
+  and text of the notifications it judges — kept or removed — together with its verdict. Card
+  numbers, phone numbers, email addresses and amounts are replaced before anything is written. The
+  samples stay in app-private storage, are never uploaded, and **Clear saved samples** deletes them.
+  This is off unless you turn it on.
 
 ## What is stored, and where
 
@@ -73,6 +78,7 @@ the endpoint field as part of the agreement you gave.
 | **Remembered senders:** package name and app label, up to 300 entries | app-private `SharedPreferences` | no |
 | Last 100 removed notifications (app name, package, title, text) | app-private `SharedPreferences` | no |
 | **Counters and last-check metadata:** lifetime removal count, count of notifications skipped while busy, last verdict, last error, time of the last notification received | app-private `SharedPreferences` | no |
+| **Saved samples** (only if you turn it on): app name, package, redacted title and text, verdict, score, up to 600 rows | app-private `SharedPreferences` | no |
 | Cached verdicts (in memory only) | RAM, lost on reboot | n/a |
 
 The remembered-senders list exists so the protected-apps screen can offer real choices without a

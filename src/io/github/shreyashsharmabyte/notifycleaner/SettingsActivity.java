@@ -31,6 +31,8 @@ public class SettingsActivity extends Screen {
     private TextView protectedValue;
     private TextView promptValue;
     private TextView removedValue;
+    private TextView trainingValue;
+    private TextView trainingExportValue;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -43,6 +45,8 @@ public class SettingsActivity extends Screen {
         buildAnswers(root, ++section);
         if (prefs.usesProvider()) buildPolicy(root, ++section);
         buildSystem(root, ++section);
+        buildTraining(root, ++section);
+        buildClassifier(root, ++section);
         buildAbout(root, ++section);
 
         setScreenContent(root);
@@ -64,7 +68,7 @@ public class SettingsActivity extends Screen {
             accessValue.setTextColor(granted ? c.muted : c.accent);
         }
         if (protectedValue != null) {
-            int count = Filters.protectedSeen(prefs.allowList(), prefs.seenApps());
+            int count = ProtectedCount.of(this, prefs.allowList(), prefs.seenApps());
             setRowValue(protectedValue, "Protected apps", count == 0 ? "None"
                     : count + (count == 1 ? " app" : " apps"));
         }
@@ -75,6 +79,21 @@ public class SettingsActivity extends Screen {
         if (removedValue != null) {
             setRowValue(removedValue, "Removed notifications", removedLabel());
         }
+        if (trainingValue != null) {
+            setRowValue(trainingValue, "Save samples on this device",
+                    prefs.capturesTraining() ? "On" : "Off");
+        }
+        if (trainingExportValue != null) {
+            int rows = sampleCount();
+            setRowValue(trainingExportValue, "Export saved samples",
+                    rows == 0 ? "None" : rows + (rows == 1 ? " sample" : " samples"));
+        }
+    }
+
+    /** Number of captured sample rows, without splitting the whole log twice. */
+    private int sampleCount() {
+        String log = prefs.trainingLog();
+        return log == null || log.isEmpty() ? 0 : log.split("\n").length;
     }
 
     /**
@@ -262,17 +281,120 @@ public class SettingsActivity extends Screen {
                     public void onClick(View v) { openNotificationSettings(); }
                 });
 
-        root.addView(settingsRowValue(root, "Export training data",
-                String.valueOf(prefs.trainingLog().isEmpty() ? 0 : prefs.trainingLog().split("\n").length) + " rows",
-                new View.OnClickListener() {
-                    @Override public void onClick(View v) { exportTraining(); }
-                }));
         protectedValue = settingsRowValue(root, "Protected apps", "",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) { start(ProtectedAppsActivity.class); }
                 });
         root.addView(rule(), margins(10, 20, 20, 0));
+    }
+
+    // ------------------------------------------------------------------ samples
+
+    /**
+     * The opt-in capture used to improve the classifier. It is off unless switched on, it says
+     * exactly what is kept, and the samples leave the phone only when the owner exports them.
+     */
+    private void buildClassifier(LinearLayout root, int section) {
+        sectionLabel(root, "Classifier", number(section));
+        long v = prefs.modelVersion();
+        settingsRowValue(root, "Model", v > 0 ? "v" + v + " (downloaded)" : "Built-in", null);
+        settingsRowValue(root, "Check for update", "Now", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) { checkClassifier(); }
+        });
+        settingsRowValue(root, "Automatic updates", prefs.autoUpdate() ? "Weekly" : "Off",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        prefs.setAutoUpdate(!prefs.autoUpdate());
+                        refresh();
+                    }
+                });
+        if (v > 0) {
+            settingsRowValue(root, "Revert to built-in", null, new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    prefs.setModelMeta("", 0);
+                    ModelUpdater.revert(SettingsActivity.this, prefs);
+                    refresh();
+                }
+            });
+        }
+        help(root, "The classifier ships inside the app, so filtering works offline from the first "
+                + "launch. When a newer one is published the app fetches it, checks its checksum and "
+                + "runs three test notifications before using it; if any check fails it keeps the "
+                + "version it already has. The check is one request for a small public file and "
+                + "carries no account, device or usage information.");
+    }
+
+    private void checkClassifier() {
+        final android.widget.Toast probe = android.widget.Toast.makeText(this, "Checking\u2026",
+                android.widget.Toast.LENGTH_SHORT);
+        probe.show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String result = ModelUpdater.check(getApplicationContext(), prefs);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        android.widget.Toast.makeText(SettingsActivity.this, result,
+                                android.widget.Toast.LENGTH_LONG).show();
+                        refresh();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void buildTraining(LinearLayout root, int section) {
+        sectionLabel(root, "Improving the filter", number(section));
+
+        trainingValue = settingsRowValue(root, "Save samples on this device", "",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        prefs.setCapturesTraining(!prefs.capturesTraining());
+                        refresh();
+                    }
+                });
+        help(root, "When on, the app saves the app name, title and text of the notifications it "
+                + "judges, with its verdict. Card numbers, phone numbers, emails and amounts are "
+                + "replaced before saving. The samples stay on this phone; nothing is uploaded, "
+                + "and nothing is sent anywhere until you export them yourself.");
+
+        trainingExportValue = settingsRowValue(root, "Export saved samples", "",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) { exportTraining(); }
+                });
+        settingsRowValue(root, "Clear saved samples", null,
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) { confirmClearTraining(); }
+                });
+        root.addView(rule(), margins(10, 20, 20, 0));
+    }
+
+    private void confirmClearTraining() {
+        if (sampleCount() == 0) {
+            Toast.makeText(this, "Nothing saved yet", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Clear saved samples?")
+                .setMessage("This deletes every sample stored on this phone. It does not change "
+                        + "any setting.")
+                .setPositiveButton("Clear", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        prefs.clearTrainingLog();
+                        refresh();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     // ------------------------------------------------------------------ about
@@ -296,25 +418,87 @@ public class SettingsActivity extends Screen {
         }
     }
 
-    /** Writes the local, redacted capture to a file the owner can pull off the phone. */
+    /**
+     * Writes the samples out and, where the platform allows it, offers a share sheet.
+     *
+     * <p>Android 10 and later can write into Downloads through MediaStore with no permission and
+     * share a {@code content://} URI. Below that there is no FileProvider in this dependency-free
+     * build, and handing a {@code file://} URI to another app throws {@code FileUriExposedException},
+     * so the file is written to the app's own folder and the path is reported instead of shared.
+     */
     private void exportTraining() {
-        Prefs s = new Prefs(this);
-        String log = s.trainingLog();
+        String log = prefs.trainingLog();
         if (log == null || log.trim().isEmpty()) {
-            Toast.makeText(this, "Nothing captured yet", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Nothing saved yet", Toast.LENGTH_SHORT).show();
             return;
         }
+        String body = "ts\tapp\ttitle\ttext\tpkg\tverdict\tscore\n" + log;
+        if (android.os.Build.VERSION.SDK_INT >= 29) shareFromDownloads(body);
+        else saveBesideTheApp(body);
+    }
+
+    private void shareFromDownloads(String body) {
+        android.net.Uri uri;
         try {
-            java.io.File dir = getExternalFilesDir(null);
-            if (dir != null && !dir.exists()) dir.mkdirs();
-            java.io.File f = new java.io.File(dir, "notifcleaner-training.tsv");
-            java.io.PrintWriter w = new java.io.PrintWriter(f, "UTF-8");
-            w.println("ts\tapp\ttitle\ttext\tpkg\tverdict\tscore");
-            for (String l : log.split("\n")) if (l.length() > 0) w.println(l);
-            w.close();
-            Toast.makeText(this, "Exported to " + f.getAbsolutePath(), Toast.LENGTH_LONG).show();
+            android.content.ContentValues v = new android.content.ContentValues();
+            v.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, "notifycleaner-samples.tsv");
+            v.put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain");
+            v.put(android.provider.MediaStore.Downloads.RELATIVE_PATH,
+                    android.os.Environment.DIRECTORY_DOWNLOADS);
+            uri = getContentResolver().insert(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+            if (uri == null) {
+                Toast.makeText(this, "Could not create the file", Toast.LENGTH_LONG).show();
+                return;
+            }
+            java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+            if (os == null) {
+                Toast.makeText(this, "Could not create the file", Toast.LENGTH_LONG).show();
+                return;
+            }
+            writeUtf8(os, body);
         } catch (Exception e) {
             Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.putExtra(Intent.EXTRA_SUBJECT, "Notification samples");
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(Intent.createChooser(send, "Send saved samples"));
+        } catch (Exception e) {
+            Toast.makeText(this, "Saved to Downloads", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void saveBesideTheApp(String body) {
+        try {
+            java.io.File dir = getExternalFilesDir(null);
+            if (dir == null) dir = getFilesDir();
+            if (!dir.exists() && !dir.mkdirs()) {
+                Toast.makeText(this, "Could not create the folder", Toast.LENGTH_LONG).show();
+                return;
+            }
+            java.io.File f = new java.io.File(dir, "notifycleaner-samples.tsv");
+            java.io.FileOutputStream os = new java.io.FileOutputStream(f);
+            writeUtf8(os, body);
+            Toast.makeText(this, "Saved to " + f.getAbsolutePath(), Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private static void writeUtf8(java.io.OutputStream os, String body) throws java.io.IOException {
+        try {
+            java.io.PrintWriter w = new java.io.PrintWriter(
+                    new java.io.OutputStreamWriter(os, "UTF-8"));
+            w.print(body);
+            w.flush();
+        } finally {
+            try { os.close(); } catch (Exception ignored) { }
         }
     }
 }

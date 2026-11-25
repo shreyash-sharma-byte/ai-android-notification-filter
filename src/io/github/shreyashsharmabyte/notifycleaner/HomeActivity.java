@@ -58,6 +58,24 @@ public class HomeActivity extends Screen {
      */
     private static final long STALL_MS = 6L * 60L * 60L * 1000L;
 
+    /**
+     * The page used to update only in {@code onResume}, so a notification removed while the user
+     * was watching it left the figure frozen — which reads as "it has stopped working". This polls
+     * a cheap signature and rebuilds only when something actually changed, so the numbers are live
+     * without re-laying out the page every few seconds.
+     */
+    private static final long REFRESH_MS = 4000L;
+    private final android.os.Handler refreshHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private String shownSignature;
+    private final Runnable refreshTick = new Runnable() {
+        @Override
+        public void run() {
+            if (prefs != null && !signature().equals(shownSignature)) render();
+            refreshHandler.postDelayed(this, REFRESH_MS);
+        }
+    };
+
     /** The trace rises once per visit; a resume is a refresh, not a re-entry. */
     private boolean traceGrown;
 
@@ -70,23 +88,74 @@ public class HomeActivity extends Screen {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        maybeUpdateModel();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         render();
+        refreshHandler.removeCallbacks(refreshTick);
+        refreshHandler.postDelayed(refreshTick, REFRESH_MS);
+    }
+
+    @Override
+    protected void onPause() {
+        refreshHandler.removeCallbacks(refreshTick);
+        super.onPause();
+    }
+
+    /** Everything the page shows, in one cheap string, so a poll can tell "changed" from "same". */
+    private String signature() {
+        String log = prefs.log();
+        return prefs.removedTotal() + "|" + prefs.lastAt() + "|" + prefs.lastVerdict()
+                + "|" + prefs.lastNotificationAt() + "|" + (log == null ? 0 : log.length())
+                + "|" + NotifService.isConnected();
+    }
+
+    private void maybeUpdateModel() {
+        final Prefs p = new Prefs(this);
+        if (!ModelUpdater.due(p)) return;
+        new Thread(new Runnable() {
+            @Override
+            public void run() { ModelUpdater.check(getApplicationContext(), p); }
+        }).start();
+    }
+
+    /** Every app the filter could act on: launchable, non-system packages. */
+    private int installedAppCount() {
+        android.content.Intent main = new android.content.Intent(android.content.Intent.ACTION_MAIN);
+        main.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+        java.util.HashSet<String> pkgs = new java.util.HashSet<String>();
+        for (android.content.pm.ResolveInfo ri : getPackageManager().queryIntentActivities(main, 0)) {
+            if (ri.activityInfo == null) continue;
+            String pkg = ri.activityInfo.packageName;
+            if (pkg.equals(getPackageName())) continue;
+            try {
+                android.content.pm.ApplicationInfo ai = getPackageManager().getApplicationInfo(pkg, 0);
+                if ((ai.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) pkgs.add(pkg);
+            } catch (Exception ignored) {
+            }
+        }
+        return pkgs.size();
     }
 
     private void render() {
         now = System.currentTimeMillis();
+        // Counts come from what the app has actually recorded, not from a package scan: the
+        // protected figure is apps the filter has seen and is shielding, and the second figure is
+        // apps that have posted at least once. Asking PackageManager for every installed app on
+        // every resume was both slow and a different question from the one the label asks.
         java.util.List<String[]> seen = prefs.seenApps();
-        t = Telemetry.of(prefs.log(), Filters.protectedSeen(prefs.allowList(), seen),
-                seen.size(), prefs.dropped(),
+        t = Telemetry.of(prefs.log(), ProtectedCount.of(this, prefs.allowList(), seen),
+                installedAppCount(), prefs.dropped(),
                 prefs.lastVerdict(), prefs.lastAt(), prefs.lastError(), now);
 
         LinearLayout root = vertical();
-        masthead(root, null);
+        masthead(root, null, "Settings", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { start(SettingsActivity.class); }
+        });
         View footer = null;
         if (prefs.consented()) {
             buildState(root);
@@ -96,6 +165,7 @@ public class HomeActivity extends Screen {
             footer = buildCover(root);
         }
         setScreenContent(root, footer);
+        shownSignature = signature();
     }
 
     // ------------------------------------------------------------------ the cover
@@ -285,8 +355,12 @@ public class HomeActivity extends Screen {
                 statusSentence(on, ready, connected)), margins(26, 20, 20, 0));
 
         if (!granted) {
-            TextView why = text("Android grants notification access in its own settings screen.",
-                    13, c.muted, false);
+            // Android's own dialog is alarming — it lists everything a listener *could* do, not
+            // what this app does. Say the difference before sending the user there.
+            TextView why = text("Android grants notification access in its own settings screen. Its "
+                    + "warning lists everything a notification listener could do; this app only reads "
+                    + "titles and text to decide junk, and never replies to messages or changes "
+                    + "settings.", 13, c.muted, false);
             why.setLineSpacing(dp(4), 1f);
             root.addView(why, margins(12, 20, 24, 0));
         }
@@ -385,6 +459,11 @@ public class HomeActivity extends Screen {
 
     private String statusSentence(boolean on, boolean ready, boolean connected) {
         if (!on) return "Filtering is off";
+        // Access revoked is not "running with a hiccup": the app cannot see a single notification.
+        // Saying "on" here put a green dot above a row reading "Notification access — Not allowed".
+        if (!notificationAccessGranted()) {
+            return "Filtering is paused \u00B7 Android has no notification access";
+        }
         if (!ready) return "Filtering is on, but setup is unfinished";
         if (stalled(on, ready, connected)) return "Filtering is on, but Android has stopped it";
         long last = lastHeard();
@@ -418,6 +497,7 @@ public class HomeActivity extends Screen {
 
     private int statusColour(boolean on, boolean ready, boolean connected) {
         if (!on) return c.muted;
+        if (!notificationAccessGranted()) return c.bad;
         if (!ready || stalled(on, ready, connected)) return c.bad;
         return c.good;
     }
@@ -538,7 +618,7 @@ public class HomeActivity extends Screen {
         if (thisHour == 1) {
             return "1 removed in the last hour. Busiest hour in 12: " + peak + ".";
         }
-        return thisHour + " removed in the last hour. Busiest hour in 12: " + peak + ".";
+        return thisHour + " removed in the last hour. Busiest hour in the last twelve: " + peak + ".";
     }
 
     /** The true busiest bucket. Telemetry floors its scale at one; a printed reading must not be. */
@@ -568,11 +648,27 @@ public class HomeActivity extends Screen {
         LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         left.setMarginEnd(dp(16));
-        second.addView(counter(t.protectedApps, false, "Apps protected", "protected", false), left);
-        second.addView(counter(t.watched, false, "Apps seen", "watched", false),
+        second.addView(opensProtectedList(
+                counter(t.protectedApps, false, "Apps excluded", "protected", false)), left);
+        second.addView(opensProtectedList(
+                counter(t.watched, false, "Apps monitored", "watched", false)),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         block.addView(second, margins(14, 0, 0, 0));
         return block;
+    }
+
+    /**
+     * A summary figure that opens the list behind it. "3 apps protected" with no way to see which
+     * three is the kind of dead end a number should never be.
+     */
+    private View opensProtectedList(View counter) {
+        counter.setBackground(ripple());
+        counter.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { start(ProtectedAppsActivity.class); }
+        });
+        makeButton(counter, "Opens the protected apps list");
+        return counter;
     }
 
     private View counter(final int value, boolean lead, String label, String key,

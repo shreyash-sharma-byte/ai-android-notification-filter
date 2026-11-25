@@ -1,0 +1,7 @@
+{
+  "version": 5,
+  "url": "https://raw.githubusercontent.com/shreyash-sharma-byte/ai-android-notification-filter/main/assets/local_model.tsv.gz",
+  "sha256": "2a7defd0d3243499aca0bfbf5451f88f117f714e7d44f0e709e7c140566bfad9",
+  "minApp": 54,
+  "notes": "Insurance, credit-card and prize advertising treated as junk; real bank alerts kept."
+}

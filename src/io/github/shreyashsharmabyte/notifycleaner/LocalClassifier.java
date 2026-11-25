@@ -49,7 +49,7 @@ public final class LocalClassifier {
      * as unsure <em>when the evidence gate fires</em>; without promotional evidence the gate has
      * already settled the case on the keep side and KEEP is the honest label.
      */
-    static final float MARGIN = 0.25f;
+    static final float MARGIN = 0f;
 
     public static final class Model {
         final float bias;

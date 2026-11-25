@@ -103,9 +103,17 @@ public class NotifService extends NotificationListenerService {
             if (localModel != null || localModelFailed) return localModel;
             InputStream in = null;
             try {
-                in = context.getAssets().open(MODEL_ASSET);
+                // A verified download wins; the bundled asset is the floor we can never fall below.
+                java.io.File dl = ModelUpdater.active(context);
+                if (dl.isFile()) {
+                    byte[] blob = ModelStore.read(dl);
+                    if (ModelStore.acceptable(blob)) in = new java.io.ByteArrayInputStream(blob);
+                }
+                boolean downloaded = in != null;
+                if (in == null) in = context.getAssets().open(MODEL_ASSET);
                 localModel = LocalClassifier.load(in);
-                Log.i(TAG, "on-device model loaded: " + localModel.size() + " features");
+                Log.i(TAG, "on-device model loaded: " + localModel.size() + " features"
+                        + (downloaded ? " (downloaded v" + new Prefs(context).modelVersion() + ")" : " (built-in)"));
             } catch (Throwable t) {
                 localModelFailed = true;
                 localModelError = t.getClass().getSimpleName()
@@ -245,6 +253,7 @@ public class NotifService extends NotificationListenerService {
         long now = System.currentTimeMillis();
         try {
             final Decision.Verdict verdict;
+            float scoreBuf = -99f;
             final String note;
             final boolean problem;
 
@@ -256,6 +265,7 @@ public class NotifService extends NotificationListenerService {
                     return;
                 }
                 LocalClassifier.Result result = LocalClassifier.classify(onDevice, pkg, label(pkg), title, text);
+                scoreBuf = result.score;
                 verdict = result.verdict;
                 note = null;
                 problem = false;
@@ -283,12 +293,12 @@ public class NotifService extends NotificationListenerService {
                 cache.put(cacheKey, Boolean.TRUE);
                 dismiss(sbnKey);
                 settings.appendLog(LogCodec.encodeEntry(now, label(pkg), title, text, pkg));
-                capture(settings, now, pkg, title, text, "JUNK");
+                capture(settings, now, pkg, title, text, "JUNK", scoreBuf);
                 settings.recordSuccess("JUNK", now);
             } else if (verdict == Decision.Verdict.KEEP) {
                 cache.put(cacheKey, Boolean.FALSE);
                 settings.recordSuccess("KEEP", now);
-                capture(settings, now, pkg, title, text, "KEEP");
+                capture(settings, now, pkg, title, text, "KEEP", scoreBuf);
             } else {
                 // UNCLEAR is a normal outcome, not a fault: the notification is kept and the
                 // home screen must say so, not "needs attention". An on-device UNCLEAR is the
@@ -390,9 +400,9 @@ public class NotifService extends NotificationListenerService {
     }
 
     /** Local, redacted capture for later retraining. Never transmitted. */
-    private void capture(Prefs s, long now, String pkg, String title, String text, String v) {
+    private void capture(Prefs s, long now, String pkg, String title, String text, String v, float score) {
         if (!s.capturesTraining()) return;
-        String e = TrainingLog.encode(now, label(pkg), title, text, pkg, v, 0f);
+        String e = TrainingLog.encode(now, label(pkg), title, text, pkg, v, score);
         s.setTrainingLog(TrainingLog.append(s.trainingLog(), e));
     }
 }

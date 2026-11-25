@@ -188,7 +188,7 @@ public class ProtectedAppsActivity extends Screen {
 
     /**
      * Entries in the stored list that match no installed app. These used to be invisible: counted
-     * in "N apps protected", never readable and never removable. Excluding the built-in defaults
+     * in "N apps protected", never readable and never removable. Skipping the built-in defaults
      * keeps a fresh install from showing a wall of apps that simply are not on this phone.
      */
     private void renderUnmatched(LinearLayout parent, String list, String query) {
@@ -332,7 +332,7 @@ public class ProtectedAppsActivity extends Screen {
 
     private void refreshSummary() {
         if (summary == null) return;
-        int count = Filters.protectedCount(prefs.allowList());
+        int count = ProtectedCount.of(this, prefs.allowList(), prefs.seenApps());
         if (count == 0) {
             summary.setText("No apps protected.");
             summary.setTextColor(c.muted);

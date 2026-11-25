@@ -331,6 +331,15 @@ abstract class Screen extends Activity {
 
     /** The masthead: printer's mark, wordmark in caps, issue line, and the page's top rule. */
     protected void masthead(LinearLayout root, String meta) {
+        masthead(root, meta, null, null);
+    }
+
+    /**
+     * @param actionLabel a trailing action, or null; the home screen puts "Settings" here so the
+     *                    app can be configured without scrolling to the bottom of a long page
+     */
+    protected void masthead(LinearLayout root, String meta, String actionLabel,
+                            View.OnClickListener actionListener) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -353,7 +362,9 @@ abstract class Screen extends Activity {
         row.addView(word, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        if (meta != null && !meta.isEmpty()) {
+        if (actionLabel != null) {
+            row.addView(action(actionLabel, true, actionListener));
+        } else if (meta != null && !meta.isEmpty()) {
             TextView m = kicker(meta, c.faint);
             m.setLetterSpacing(0.12f);
             m.setSingleLine(true);
@@ -905,7 +916,8 @@ abstract class Screen extends Activity {
      */
     protected static final String DISCLOSURE_TEXT =
             PRODUCT + " reads your notifications so it can decide which are junk. It decides "
-            + "on this phone, with a small classifier that is part of the app.\n\n"
+            + "on this phone, by itself: the judgement is part of the app and needs no account and "
+            + "no internet.\n\n"
             + "\u2022 Nothing leaves this device. There is no account, no server of ours, and no "
             + "network request at all in the default setup.\n"
             + "\u2022 It reads the notification title and text, and records the posting app's "
@@ -919,7 +931,11 @@ abstract class Screen extends Activity {
             + "apps are on your protected list from the start.\n"
             + "\u2022 On the optional provider path, long text is shortened before it is sent: "
             + "the beginning and the end are kept.\n"
-            + "\u2022 The removed list is stored on this device only.\n\n"
+            + "\u2022 The removed list is stored on this device only.\n"
+            + "\u2022 You can also switch on saving samples on this device, to improve the filter: "
+            + "the app name, title and text it judged, with card numbers, phone numbers, emails "
+            + "and amounts removed. It is off unless you turn it on, "
+            + "it stays on this phone, and only you can export it.\n\n"
             + "Only if you choose your own provider in Settings does notification text leave the "
             + "phone. That is off by default, it needs a second, provider-specific agreement, and "
             + "nothing is sent until you give it.\n\n"

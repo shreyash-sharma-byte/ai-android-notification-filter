@@ -42,7 +42,8 @@ public final class Senders {
     static final String[] PERSONAL = {
             // Chat and calls
             "com.whatsapp", "org.telegram.messenger", "com.google.android.apps.messaging",
-            "com.samsung.android.messaging", "com.android.mms", "org.thoughtcrime.securesms",
+            "com.samsung.android.messaging", "com.android.messaging", "com.android.mms",
+            "org.thoughtcrime.securesms",
             "com.slack", "com.discord", "com.facebook.orca", "com.instagram.android",
             "com.viber.voip", "jp.naver.line.android", "com.microsoft.teams", "com.tencent.mm",
             "com.snapchat.android", "com.google.android.dialer", "com.android.dialer",

@@ -35,6 +35,10 @@ public final class Prefs {
     public static final String KEY_LAST_ERROR = "last_e";
     public static final String KEY_DROPPED = "dropped";
 
+    /** Opt-in local capture of redacted samples, for retraining. */
+    public static final String KEY_TRAIN_CAPTURE = "train_capture";
+    public static final String KEY_TRAIN_LOG = "train_log";
+
     /** Total removals ever, so the home figure is not capped by the 100-entry log. */
     public static final String KEY_REMOVED_TOTAL = "removed_total";
 
@@ -90,12 +94,45 @@ public final class Prefs {
 
     public void setEnabled(boolean on) { p.edit().putBoolean(KEY_ENABLED, on).apply(); }
 
-    /** Local training capture: redacted before storage, never leaves the device unless exported. */
-    public boolean capturesTraining() { return p.getBoolean("train_capture", true); }
+    /**
+     * Local training capture: redacted before storage, never transmitted by the app.
+     *
+     * <p>Off unless the user turns it on. It used to default to true with no switch anywhere,
+     * which meant the app recorded the title and text of notifications — including ones it kept —
+     * while the disclosure said only removed notifications were recorded. A privacy tool cannot
+     * keep evidence the owner does not know about, so this is now an explicit opt-in.
+     */
+    public boolean capturesTraining() { return p.getBoolean(KEY_TRAIN_CAPTURE, false); }
 
-    public String trainingLog() { return p.getString("train_log", ""); }
+    public void setCapturesTraining(boolean on) {
+        p.edit().putBoolean(KEY_TRAIN_CAPTURE, on).apply();
+    }
 
-    public void setTrainingLog(String v) { p.edit().putString("train_log", v).apply(); }
+    public String trainingLog() { return p.getString(KEY_TRAIN_LOG, ""); }
+
+    public void setTrainingLog(String v) { p.edit().putString(KEY_TRAIN_LOG, v).apply(); }
+
+    /** Version of the downloaded classifier, 0 when running the built-in one. */
+    public long modelVersion() { return p.getLong("model_version", 0); }
+
+    public int minAppVersion() { return p.getInt("model_min_app", 0); }
+
+    public void setModelMeta(String meta, long version) {
+        p.edit().putString("model_meta", meta).putLong("model_version", version).apply();
+    }
+
+    public String modelMeta() { return p.getString("model_meta", ""); }
+
+    public boolean autoUpdate() { return p.getBoolean("model_auto_update", true); }
+
+    public void setAutoUpdate(boolean on) { p.edit().putBoolean("model_auto_update", on).apply(); }
+
+    public long lastCheck() { return p.getLong("model_last_check", 0); }
+
+    public void setLastCheck(long t) { p.edit().putLong("model_last_check", t).apply(); }
+
+    /** Forgets every saved sample, without touching the capture switch. */
+    public void clearTrainingLog() { p.edit().remove(KEY_TRAIN_LOG).apply(); }
 
     /** True when every field a cloud provider needs is present and the endpoint is acceptable. */
     public boolean configured() {

@@ -143,7 +143,13 @@ public class RemovedActivity extends Screen {
         // The big figure is every removal ever; the list is only the last 100. Saying which is
         // which is the difference between an honest record and a counter that stops at 100.
         summaryFigure.setText(String.valueOf(total));
-        summaryLabel.setText(total == 1 ? "Notification removed" : "Notifications removed");
+        // With the list cleared the figure is all-time, and a big "7 Notifications removed" over
+        // "The list is empty" reads as a contradiction. Name the window the number describes.
+        if (shown == 0 && total > 0) {
+            summaryLabel.setText("Removed all time");
+        } else {
+            summaryLabel.setText(total == 1 ? "Notification removed" : "Notifications removed");
+        }
         summaryFigure.setContentDescription(total
                 + (total == 1 ? " notification removed, all time" : " notifications removed, all time"));
         if (listCaption != null) {
@@ -224,10 +230,15 @@ public class RemovedActivity extends Screen {
         return item;
     }
 
+    /**
+     * The time as this phone shows time. Hard-coding "HH:mm" meant a user on a 12-hour clock saw
+     * 00:39 for a notification removed at 12:39 PM — the record looked wrong, which for the only
+     * record of an irreversible action is the worst place to look wrong.
+     */
     private String hhmm(String stamp) {
         try {
             long t = Long.parseLong(stamp);
-            return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(t));
+            return android.text.format.DateFormat.getTimeFormat(this).format(new Date(t));
         } catch (Exception e) {
             return "";
         }
