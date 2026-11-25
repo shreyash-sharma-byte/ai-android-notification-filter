@@ -2,9 +2,10 @@
 <!--
   Adaptive foreground, 108x108, 72dp safe zone centred.
 
-  Two notification rows above, one vermilion funnel below: the list, and the thing that sorts it. The
-  funnel is large enough to survive a 48dp launcher cell - smaller funnels collapsed into a red
-  speck, which is why it is centred and this size rather than tucked beside a third row.
+  Three notification rows, the last one cut short, feeding a vermilion funnel. The short row is the
+  junk that does not make it through; the funnel is the thing doing the cutting. Three rows stacked
+  above a centred funnel beat every side-by-side arrangement, because a funnel narrow enough to sit
+  beside a row collapses into a speck at launcher size.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -14,14 +15,18 @@
 
     <path
         android:fillColor="#F4EDE0"
-        android:pathData="M38.5,30H69.5A4.5,4.5 0 0 1 69.5,39H38.5A4.5,4.5 0 0 1 38.5,30z" />
+        android:pathData="M38.5,24H69.5A4.5,4.5 0 0 1 69.5,33H38.5A4.5,4.5 0 0 1 38.5,24z" />
 
     <path
         android:fillColor="#F4EDE0"
-        android:pathData="M38.5,43H69.5A4.5,4.5 0 0 1 69.5,52H38.5A4.5,4.5 0 0 1 38.5,43z" />
+        android:pathData="M38.5,36H69.5A4.5,4.5 0 0 1 69.5,45H38.5A4.5,4.5 0 0 1 38.5,36z" />
+
+    <path
+        android:fillColor="#F4EDE0"
+        android:pathData="M38.5,48H55.5A4.5,4.5 0 0 1 55.5,57H38.5A4.5,4.5 0 0 1 38.5,48z" />
 
     <path
         android:fillColor="#E4572E"
-        android:pathData="M41.6,55.5H66.4L58.6,67.6V78.5H49.4V67.6z" />
+        android:pathData="M42,59H66L58,71V81H50V71z" />
 
 </vector>
