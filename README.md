@@ -22,6 +22,25 @@ already removed are not listed again — they are dismissed from the cache.
 
 ---
 
+## What it looks like
+
+<img src="docs/screenshots/on-device-selftest.jpg" width="300" align="right" alt="Settings self-test: model loaded with 2589 features, a sample promotion classified JUNK, a sample OTP kept by rule">
+
+Settings → Answers → **Test the on-device classifier** reports what the app believes about itself:
+whether notification access is granted, whether filtering is on, how many features the model loaded
+with, and what it answers for a sample promotion and a sample OTP.
+
+That dialog is not decoration. A `ExceptionInInitializerError` — `Pattern.UNICODE_CHARACTER_CLASS`
+is ICU-backed on Android and can throw while compiling a static initializer, even though every
+desktop JVM test passes — once killed the classifier at class load. The app looked healthy, said
+filtering was on, and silently kept every notification. The model asset was present and
+byte-identical throughout; the only thing wrong was one flag. Now a single tap says whether it is
+actually working.
+
+<br clear="right">
+
+---
+
 ## Screens
 
 Six small screens, but the launcher opens one and the rest are one tap from it. There is no wizard:
