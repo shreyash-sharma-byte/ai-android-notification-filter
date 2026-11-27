@@ -88,7 +88,6 @@ public class HomeActivity extends Screen {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        maybeUpdateModel();
     }
 
     @Override
@@ -113,33 +112,6 @@ public class HomeActivity extends Screen {
                 + "|" + NotifService.isConnected();
     }
 
-    private void maybeUpdateModel() {
-        final Prefs p = new Prefs(this);
-        if (!ModelUpdater.due(p)) return;
-        new Thread(new Runnable() {
-            @Override
-            public void run() { ModelUpdater.check(getApplicationContext(), p); }
-        }).start();
-    }
-
-    /** Every app the filter could act on: launchable, non-system packages. */
-    private int installedAppCount() {
-        android.content.Intent main = new android.content.Intent(android.content.Intent.ACTION_MAIN);
-        main.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
-        java.util.HashSet<String> pkgs = new java.util.HashSet<String>();
-        for (android.content.pm.ResolveInfo ri : getPackageManager().queryIntentActivities(main, 0)) {
-            if (ri.activityInfo == null) continue;
-            String pkg = ri.activityInfo.packageName;
-            if (pkg.equals(getPackageName())) continue;
-            try {
-                android.content.pm.ApplicationInfo ai = getPackageManager().getApplicationInfo(pkg, 0);
-                if ((ai.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) pkgs.add(pkg);
-            } catch (Exception ignored) {
-            }
-        }
-        return pkgs.size();
-    }
-
     private void render() {
         now = System.currentTimeMillis();
         // Counts come from what the app has actually recorded, not from a package scan: the
@@ -148,7 +120,7 @@ public class HomeActivity extends Screen {
         // every resume was both slow and a different question from the one the label asks.
         java.util.List<String[]> seen = prefs.seenApps();
         t = Telemetry.of(prefs.log(), ProtectedCount.of(this, prefs.allowList(), seen),
-                installedAppCount(), prefs.dropped(),
+                seen.size(), prefs.dropped(),
                 prefs.lastVerdict(), prefs.lastAt(), prefs.lastError(), now);
 
         LinearLayout root = vertical();
@@ -649,9 +621,9 @@ public class HomeActivity extends Screen {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         left.setMarginEnd(dp(16));
         second.addView(opensProtectedList(
-                counter(t.protectedApps, false, "Apps excluded", "protected", false)), left);
+                counter(t.protectedApps, false, "Apps protected", "protected", false)), left);
         second.addView(opensProtectedList(
-                counter(t.watched, false, "Apps monitored", "watched", false)),
+                counter(t.watched, false, "Apps seen", "watched", false)),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         block.addView(second, margins(14, 0, 0, 0));
         return block;

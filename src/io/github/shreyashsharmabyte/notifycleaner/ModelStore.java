@@ -100,10 +100,16 @@ public final class ModelStore {
 
     public static String field(String json, String key) {
         if (json == null) return "";
-        int i = json.indexOf("\"" + key + "\":\"");
+        int i = json.indexOf("\"" + key + "\"");
         if (i < 0) return "";
-        int start = i + key.length() + 4;
-        int end = json.indexOf('"', start);
-        return end < 0 ? "" : json.substring(start, end);
+        int j = i + key.length() + 2;
+        while (j < json.length() && Character.isWhitespace(json.charAt(j))) j++;
+        if (j >= json.length() || json.charAt(j) != ':') return "";
+        j++;
+        while (j < json.length() && Character.isWhitespace(json.charAt(j))) j++;
+        if (j >= json.length() || json.charAt(j) != '"') return "";
+        j++;
+        int end = json.indexOf('"', j);
+        return end < 0 ? "" : json.substring(j, end);
     }
 }

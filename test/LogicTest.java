@@ -35,6 +35,9 @@ public final class LogicTest {
         urls();
         strictness();
         allowList();
+        guardsExtra();
+        guardsMore();
+        parity();
         modelStore();
         trainingLog();
         localModels();
@@ -434,6 +437,11 @@ public final class LogicTest {
         String meta = ModelStore.meta(7, "deadbeef", 54, "notes");
         eq("meta round trip", 7L, ModelStore.version(meta));
         eq("field url", "deadbeef", ModelStore.field(meta, "sha256"));
+        eq("pretty json url", "https://x/y.gz",
+                ModelStore.field("{\n  \"url\": \"https://x/y.gz\",\n  \"sha256\": \"abc\"\n}", "url"));
+        eq("pretty json sha", "abc",
+                ModelStore.field("{\n  \"url\": \"https://x/y.gz\",\n  \"sha256\": \"abc\"\n}", "sha256"));
+        eq("missing key is empty", "", ModelStore.field("{\"a\": \"b\"}", "url"));
 
         byte[] gz = gzip("#bias\t-0.1\nfoo\t1.0\t0.5\nbar\t1.1\t-0.2\n".getBytes());
         eq("feature count", 2, ModelStore.featureCount(gz));
@@ -459,6 +467,43 @@ public final class LogicTest {
         } catch (java.io.IOException e) {
             return new byte[0];
         }
+    }
+
+    private static void guardsExtra() {
+        // New rules must fire on the real shape and stay quiet on adverts that borrow the words.
+        eq("missed call is guarded", "call", Guards.check("Phone", "Missed call", "Pawar Kaka"));
+        eq("incoming call is guarded", "call", Guards.check("WhatsApp", "", "Ravi is calling you"));
+        eq("meeting start is guarded", "meeting",
+                Guards.check("Teams", "Meeting starting", "Design sync starts in 5 minutes"));
+        eq("train delay is guarded", "travel",
+                Guards.check("IRCTC", "Train delayed", "12123 delayed by 40 minutes"));
+        eq("platform change is guarded", "travel",
+                Guards.check("IRCTC", "Update", "Platform changed to 4"));
+        eq("premium due is guarded", "deadline",
+                Guards.check("LIC", "Premium due", "Your premium due on 25 Nov"));
+        check("calling all shoppers is not a call", Guards.check("Myntra", "", "Calling all shoppers! 50% off") == null);
+        check("join now reward is not a meeting", Guards.check("Truecaller", "VIP", "Join now and get your welcome reward") == null);
+        check("insurance advert is not a deadline", Guards.check("IRCTC", "Axis Max Life", "Term insurance premium starting at 490 per month") == null);
+    }
+
+    private static void guardsMore() {
+        eq("auto-debit is guarded", "renewal",
+                Guards.check("Netflix", "Renewal", "Auto-debit of 499 will be charged on 25 Nov"));
+        eq("appointment is guarded", "health",
+                Guards.check("Alyve", "Appointment", "Your appointment is confirmed for 5 PM"));
+        eq("admit card is guarded", "exam", Guards.check("Board", "Exam", "Admit card available for download"));
+        eq("itr due is guarded", "deadline", Guards.check("IT Dept", "Reminder", "Your ITR filing is due on 31 July"));
+        eq("shortlisted is guarded", "job", Guards.check("Naukri", "Status", "You have been shortlisted"));
+        eq("cyclone warning is guarded", "emergency",
+                Guards.check("IMD", "Alert", "Cyclone warning issued for the coast"));
+        eq("low battery is guarded", "device",
+                Guards.check("System UI", "Battery power low", "Battery is low. Turn on Power saving"));
+        check("pan card advert is not paperwork",
+                Guards.check("LoanApp", "PAN", "Get your PAN card in 5 minutes! Apply now") == null);
+        check("emergency loan advert is not an alert",
+                Guards.check("LoanApp", "", "Emergency loan up to 5 lakh approved") == null);
+        check("practice questions are not an interview",
+                Guards.check("Naukri", "Practice", "Practice these 4 interview questions today") == null);
     }
 
     private static void allowList() {
@@ -774,7 +819,7 @@ public final class LogicTest {
      * one pure class and from the classifier, because both engines now depend on them.
      */
     private static void guards() {
-        eq("guard names", "[otp, transaction, order, security, deadline]",
+        eq("guard names", "[otp, transaction, order, security, deadline, call, meeting, travel, renewal, health, exam, govt, job, emergency, device]",
                 java.util.Arrays.toString(Guards.NAMES));
 
         eq("guard otp", "otp", Guards.check("ICICI Bank", "OTP",
@@ -946,6 +991,35 @@ public final class LogicTest {
      * means a trade confirmation or an OTP gets dismissed on the user's phone, and a personal
      * message slipping through is the regression this change exists to stop.
      */
+    /**
+     * Cross-language parity: these numbers come from scikit-learn scoring the exported weights,
+     * so a drift in tokenisation, sublinear tf or L2 normalisation fails the build instead of
+     * silently changing what the app decides.
+     */
+    private static void parity() {
+        LocalClassifier.Model m;
+        try {
+            m = LocalClassifier.load(new java.io.FileInputStream("assets/local_model.tsv.gz"));
+        } catch (Exception e) {
+            check("parity model loads: " + e.getMessage(), false);
+            return;
+        }
+        golden(m, "Zomato: 50% OFF. Get 50% off on your next order. Order now!", 3.7791f);
+        golden(m, "Telegram: . Are you free tonight?", -1.9720f);
+        golden(m, "ACME: OTP. 482913 is your OTP for login. Do not share.", -4.1128f);
+        golden(m, "Naukri: Job NVite. Recruiter considers you a good fit for Software Engineer role", -1.7457f);
+        golden(m, "GitHub: Build failed. Workflow CI failed on main: unit tests failed", -2.9058f);
+        golden(m, "Microsoft Teams: Meeting starting. Design sync starts in 5 minutes. Join now.", -2.9654f);
+        golden(m, "IRCTC: Axis Max Life. Term life insurance worth 1 Cr starting at 490 per month", 1.3009f);
+        golden(m, "Phone: Missed call. Pawar Kaka", -2.4751f);
+    }
+
+    private static void golden(LocalClassifier.Model m, String rendered, float expected) {
+        float got = LocalClassifier.score(m, rendered);
+        check("parity " + rendered.substring(0, Math.min(28, rendered.length()))
+                + " exp " + expected + " got " + got, Math.abs(got - expected) < 0.02f);
+    }
+
     private static void localClassifier() {
         LocalClassifier.Model model;
         try {

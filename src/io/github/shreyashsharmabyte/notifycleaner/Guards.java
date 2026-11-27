@@ -27,6 +27,8 @@ public final class Guards {
     /** The five rule names, in evaluation order. Tests and the Settings self-test use these. */
     public static final String[] NAMES = {
             "otp", "transaction", "order", "security", "deadline",
+            "call", "meeting", "travel", "renewal", "health", "exam", "govt", "job",
+            "emergency", "device",
     };
 
     private static final String[] PATTERNS = {
@@ -53,7 +55,49 @@ public final class Guards {
 
             // Account deadlines and warnings that would cost the user money or access.
             "expires? (today|tomorrow|in \\d)|low balance|re-?kyc|\\bdue (on|in|today)\\b|"
-                    + "avoid (interruption|suspension|square)",
+                    + "avoid (interruption|suspension|square)|premium (is )?due",
+
+            // A call is happening now. "Calling all shoppers" is an advert, so the patterns
+            // require the grammatical shape of a real call.
+            "missed (voice |video )?call|is calling you|\\bincoming (voice |video )?call\\b|"
+                    + "call from \\w",
+
+            // A scheduled meeting is about to start; the useful window is minutes, not days.
+            "starts in \\d{1,3} ?min|meeting (is )?(starting|starts)|huddle started|"
+                    + "\\b(join|starting) (now|the call)\\b.{0,20}(meeting|call)",
+
+            // Travel disruptions and boarding state, where acting late costs money.
+            "(train|flight|bus) .{0,25}(delay|cancel|diverted|reschedul)|platform (changed|no\\.)|"
+                    + "gate (change|clos)|check-?in (is )?(open|closing)",
+
+            // Money leaving on a schedule. Unattended, these become overdrafts.
+            "\\bmandate\\b|auto[- ]?debit|auto[- ]?renew|will be (charged|debited)|"
+                    + "subscription (renews|expires)",
+
+            // Health events where a missed message means a missed appointment or result.
+            "appointment (is )?(confirmed|scheduled|booked)|appointment reminder|"
+                    + "report is ready|prescription|medicine reminder|lab report",
+
+            // Exams and admissions.
+            "admit card|hall ticket|result (declared|is out)|exam (centre|center|date)",
+
+            // Identity and tax paperwork: state verbs only, so "get your PAN card in 5 min"
+            // (an advert) does not match.
+            "aadhaar.{0,20}(update|verif|link)|pan (card )?(ready|dispatch|update)|"
+                    + "passport (ready|dispatch|approved)|visa (approved|granted)|itr (filed|due)",
+
+            // Job progress. "shortlisted" and an invitation are outcomes; "practice interview
+            // questions" is an advert and is deliberately not matched.
+            "\\bshortlisted\\b|offer letter|interview (is )?(scheduled|confirmed|invitation)|"
+                    + "interview call",
+
+            // Public safety alerts. Bare "emergency" is excluded: lenders advertise
+            // "emergency loans".
+            "public safety|amber alert|evacuat|cyclone (warning|alert)|flood (warning|alert)|"
+                    + "earthquake",
+
+            // Device state that needs action now.
+            "battery (is )?low|storage (is )?(full|running out)|sim (card )?(blocked|not detected)",
     };
 
     private static final Pattern[] COMPILED = new Pattern[PATTERNS.length];

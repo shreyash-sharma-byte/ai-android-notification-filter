@@ -297,35 +297,10 @@ public class SettingsActivity extends Screen {
      */
     private void buildClassifier(LinearLayout root, int section) {
         sectionLabel(root, "Classifier", number(section));
-        long v = prefs.modelVersion();
-        settingsRowValue(root, "Model", v > 0 ? "v" + v + " (downloaded)" : "Built-in", null);
-        settingsRowValue(root, "Check for update", "Now", new View.OnClickListener() {
+        settingsRowValue(root, "Check for model update", "", new View.OnClickListener() {
             @Override
             public void onClick(View view) { checkClassifier(); }
         });
-        settingsRowValue(root, "Automatic updates", prefs.autoUpdate() ? "Weekly" : "Off",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        prefs.setAutoUpdate(!prefs.autoUpdate());
-                        refresh();
-                    }
-                });
-        if (v > 0) {
-            settingsRowValue(root, "Revert to built-in", null, new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    prefs.setModelMeta("", 0);
-                    ModelUpdater.revert(SettingsActivity.this, prefs);
-                    refresh();
-                }
-            });
-        }
-        help(root, "The classifier ships inside the app, so filtering works offline from the first "
-                + "launch. When a newer one is published the app fetches it, checks its checksum and "
-                + "runs three test notifications before using it; if any check fails it keeps the "
-                + "version it already has. The check is one request for a small public file and "
-                + "carries no account, device or usage information.");
     }
 
     private void checkClassifier() {

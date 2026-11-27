@@ -11,11 +11,11 @@ import java.net.URL;
 
 /** Fetches, verifies and activates new classifier weights. */
 public final class ModelUpdater {
+    public static final String SOURCE = "https://github.com/shreyash-sharma-byte/notifycleaner-classifier";
     public static final String MANIFEST =
             "https://raw.githubusercontent.com/shreyash-sharma-byte/ai-android-notification-filter/main/classifier.json";
-    public static final long WEEK_MS = 7L * 24 * 60 * 60 * 1000;
     /** Version of the weights compiled into this APK. Bump when assets/local_model.tsv.gz changes. */
-    public static final long BUNDLED_VERSION = 5;
+    public static final long BUNDLED_VERSION = 8;
 
     private ModelUpdater() {}
 
@@ -27,10 +27,6 @@ public final class ModelUpdater {
 
     public static File active(Context c) {
         return new File(dir(c), "model.tsv.gz");
-    }
-
-    public static boolean due(Prefs p) {
-        return p.autoUpdate() && System.currentTimeMillis() - p.lastCheck() > WEEK_MS;
     }
 
     public static String check(Context c, Prefs p) {
